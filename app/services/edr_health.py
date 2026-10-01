@@ -9,12 +9,12 @@ we wait the full timeout. This module fixes that with two layers:
      within the TTL window return the cached snapshot instantly.
 
   2. A background daemon thread that pre-warms the cache every
-     `REFRESH_INTERVAL` seconds, so even the first dashboard load
+     ``REFRESH_INTERVAL`` seconds, so even the first dashboard load
      after app boot lands on a warm cache (after ~one initial probe
      cycle).
 
-The endpoint in app/blueprints/api.py reads `get_status_snapshot()`,
-which serves the cache or triggers a synchronous probe on cold start.
+Backend-specific health probes are delegated to each backend's
+``health_probe()`` method — no kind-specific if/else branching here.
 """
 
 import logging
@@ -27,21 +27,8 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
-# Per-call timeouts. Tighter than the previous defaults (agent=4s,
-# elastic=5s): when a service is reachable it answers in milliseconds,
-# so 2s is plenty of grace; when it's unreachable we fail fast and the
-# poller's next cycle picks up recovery within REFRESH_INTERVAL.
 AGENT_TIMEOUT_S = 2.0
-ELASTIC_TIMEOUT_S = 2.0
-
-# How long a cached snapshot is considered fresh. Background poller
-# refreshes more often than this, so reads under healthy operation
-# always hit a fresh cache.
 CACHE_TTL_S = 30.0
-
-# Background poller cadence. Faster than CACHE_TTL_S so the cache is
-# perpetually warm; slower than the dashboard's auto-refresh (60s) so
-# we don't probe more than necessary.
 REFRESH_INTERVAL_S = 15.0
 
 
@@ -52,12 +39,6 @@ _poller_started = False
 
 
 def get_status_snapshot(profiles: List, *, force_refresh: bool = False) -> dict:
-    """Return the latest agent-status snapshot.
-
-    Cached for `CACHE_TTL_S` seconds against the current registered-
-    profiles tuple. Cold reads (no cache, or expired) trigger a
-    synchronous probe; warm reads return the cache instantly.
-    """
     global _cached, _cached_at
 
     if not profiles:
@@ -88,12 +69,6 @@ def get_status_snapshot(profiles: List, *, force_refresh: bool = False) -> dict:
 
 
 def start_poller(deps) -> None:
-    """Kick off the background pre-warming thread. Idempotent — second
-    call is a no-op so reload-aware test setups can't spawn duplicates.
-    `deps` is the litterbox extension namespace; we pull profiles off
-    `deps.edr_registry._PROFILES` on each tick so YAML-edit-then-restart
-    flows pick up new profiles automatically (a restart re-creates deps,
-    which re-runs start_poller)."""
     global _poller_started
     with _lock:
         if _poller_started:
@@ -101,7 +76,6 @@ def start_poller(deps) -> None:
         _poller_started = True
 
     def _loop():
-        # Initial delay so app startup isn't gated on probe latency.
         time.sleep(0.5)
         while True:
             try:
@@ -121,32 +95,24 @@ def start_poller(deps) -> None:
 
 
 def _profile_key(profiles: List) -> tuple:
-    """Stable key for the cache so a profile add/remove forces a refresh
-    rather than serving stale entries."""
     return tuple(sorted((p.name, p.kind, p.agent_url) for p in profiles))
 
 
 def _public_snapshot(snapshot: dict, age: float) -> dict:
-    """Strip internal cache-bookkeeping and stamp `cache_age_seconds`."""
     out = {k: v for k, v in snapshot.items() if not k.startswith("_")}
     out["cache_age_seconds"] = round(age, 1)
     return out
 
 
 def _probe_all(profiles: List) -> dict:
-    """Probe every profile in parallel. Wall time is dominated by the
-    slowest single probe (per-probe timeout is bounded above)."""
     with ThreadPoolExecutor(max_workers=min(8, len(profiles))) as pool:
         results = list(pool.map(_probe_one, profiles))
     return {"agents": results}
 
 
 def _probe_one(p) -> dict:
-    """One profile's reachability check. Lazy-imports the EDR clients
-    to keep top-level import cost off the request hot path on cold
-    boots that don't touch this module."""
     from ..analyzers.edr.agent_client import AgentClient, AgentError, AgentUnreachable
-    from ..analyzers.edr.elastic_client import ElasticClient, ElasticError, ElasticUnreachable
+    from ..analyzers.edr.backend import get_backend
 
     agent = AgentClient(p.agent_url, timeout=AGENT_TIMEOUT_S)
     agent_info, agent_err, lock = None, None, None
@@ -161,27 +127,23 @@ def _probe_one(p) -> dict:
     except AgentError as e:
         agent_err = f"error: {e}"
 
-    elastic_info, elastic_err = None, None
-    type_label = "elastic-defend"
-    if p.kind == "elastic":
-        elastic = ElasticClient(
-            p.elastic_url, p.elastic_apikey,
-            verify_tls=p.elastic_verify_tls, timeout=ELASTIC_TIMEOUT_S,
-        )
+    backend_cls = get_backend(p.kind)
+    backend_health = {"reachable": None, "error": None}
+    type_label = p.kind
+    if backend_cls is not None:
+        type_label = backend_cls.label or p.kind
         try:
-            elastic_info = elastic.ping()
-        except ElasticUnreachable as e:
-            elastic_err = f"unreachable: {e}"
-        except ElasticError as e:
-            elastic_err = f"error: {e}"
-    elif p.kind == "fibratus":
-        type_label = "fibratus"
+            backend_health = backend_cls.health_probe(p)
+        except Exception as e:
+            logger.debug("backend health_probe failed for %s: %s", p.name, e)
+            backend_health = {"reachable": False, "error": str(e)}
 
     return {
         "name": p.name,
         "display_name": p.display_name,
         "type": type_label,
         "kind": p.kind,
+        "has_correlation": getattr(backend_cls, "has_correlation", True) if backend_cls else True,
         "agent_url": p.agent_url,
         "elastic_url": p.elastic_url,
         "agent": {
@@ -193,10 +155,12 @@ def _probe_one(p) -> dict:
             "telemetry_sources": (agent_info or {}).get("telemetry_sources") or [],
         },
         "lock": lock,
+        "backend": backend_health,
+        # Keep "elastic" key for backward compat with existing frontend
         "elastic": {
-            "reachable": elastic_info is not None if p.kind == "elastic" else None,
-            "error": elastic_err,
-            "cluster_name": (elastic_info or {}).get("cluster_name"),
-            "version": ((elastic_info or {}).get("version") or {}).get("number"),
+            "reachable": backend_health.get("reachable"),
+            "error": backend_health.get("error"),
+            "cluster_name": backend_health.get("cluster_name"),
+            "version": backend_health.get("version"),
         },
     }

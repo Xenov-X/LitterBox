@@ -1,0 +1,34 @@
+# Execution-only profile for LitterBox.
+#
+# Copy this file to e.g. `exec-lowpriv.yml` (drop the .example) and fill
+# in your values. Real profiles (*.yml without .example) are gitignored.
+#
+# An exec-only profile runs samples via a Whiskers agent WITHOUT any
+# detection backend. Use it for functional testing: does the sample
+# execute, what's the exit code, what does it print to stdout/stderr?
+#
+# Results clearly show "Detection not configured" so operators know the
+# run was not evaluated by an EDR product.
+#
+# Deploy multiple Whiskers instances under different user contexts
+# (standard user, admin, network service, domain-joined low-priv, etc.)
+# and create one profile per context to test execution across privilege
+# levels.
+
+kind: "exec"
+
+name: "exec-lowpriv"
+display_name: "Exec · Standard User"
+
+# Whiskers agent on the target VM. The agent self-reports its hostname
+# and running user context via GET /api/info.
+agent_url: "http://192.168.1.110:8080"
+
+# Hard cap on payload runtime. The agent kills the process after this
+# many seconds and the analyzer collects whatever stdout/stderr was
+# captured up to that point.
+exec_timeout_seconds: 60
+
+# Optional: where on the VM to drop the payload before executing.
+# If unset, Whiskers writes to its own temp directory.
+# drop_path: "C:\\Users\\Public\\sample.exe"

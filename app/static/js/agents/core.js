@@ -29,29 +29,23 @@ function setDot(profile, kind /* 'ok' | 'down' | 'partial' | 'unknown' */, title
 function applyStatus(agent) {
     const p = agent.name;
 
-    // Type badge — for now everything is `elastic-defend`, but the field
-    // is server-driven so future agent types render automatically.
     setText(`agentType-${p}`, agent.type || 'unknown');
 
     const a = agent.agent || {};
     const e = agent.elastic || {};
-    // Fibratus profiles have no Elastic backend — alerts arrive via the
-    // /api/edr/fibratus/ingest push endpoint. Health = agent reachable.
-    const isFibratus = agent.kind === 'fibratus';
+    const b = agent.backend || e;
+    const hasBackend = agent.has_correlation !== false;
 
-    if (isFibratus) {
+    if (!hasBackend) {
         setDot(p, a.reachable ? 'ok' : 'down',
-               a.reachable ? 'Agent reachable (Fibratus push model)' : 'Agent unreachable');
+               a.reachable ? 'Agent reachable' : 'Agent unreachable');
     } else {
-        // Aggregate dot: green if both sides reachable, yellow if only one,
-        // red if neither.
-        const reachable = (a.reachable ? 1 : 0) + (e.reachable ? 1 : 0);
-        if (reachable === 2)      setDot(p, 'ok', 'Agent + Elastic reachable');
+        const reachable = (a.reachable ? 1 : 0) + (b.reachable ? 1 : 0);
+        if (reachable === 2)      setDot(p, 'ok', 'Agent + backend reachable');
         else if (reachable === 1) setDot(p, 'partial', 'Partial — see status fields');
-        else                       setDot(p, 'down', 'Agent + Elastic unreachable');
+        else                       setDot(p, 'down', 'Agent + backend unreachable');
     }
 
-    // Agent side
     if (a.reachable) {
         setText(`agentStatus-${p}`, 'Online');
         setColor(`agentStatus-${p}`, 'var(--lb-sev-low)');
@@ -66,7 +60,6 @@ function applyStatus(agent) {
         setText(`agentVersion-${p}`,  '—');
     }
 
-    // Lock
     if (agent.lock) {
         const inUse = !!agent.lock.in_use;
         setText(`agentLock-${p}`, inUse ? 'Busy (run in progress)' : 'Idle');
@@ -76,17 +69,16 @@ function applyStatus(agent) {
         setColor(`agentLock-${p}`, 'var(--lb-text-mute)');
     }
 
-    // Backend side. Elastic profiles: probe the cluster. Fibratus
-    // profiles: no remote backend — show the push-buffer label.
-    if (isFibratus) {
-        setText(`agentElastic-${p}`, 'Push-mode (no remote backend)');
+    if (!hasBackend) {
+        const label = agent.has_correlation === false ? 'Exec-only (no backend)' : 'Agent-only (no remote backend)';
+        setText(`agentElastic-${p}`, label);
         setColor(`agentElastic-${p}`, 'var(--lb-text-mute)');
         setText(`agentCluster-${p}`, '—');
-    } else if (e.reachable) {
-        const v = e.version ? ` v${e.version}` : '';
+    } else if (b.reachable) {
+        const v = b.version ? ` v${b.version}` : '';
         setText(`agentElastic-${p}`, `Reachable${v}`);
         setColor(`agentElastic-${p}`, 'var(--lb-sev-low)');
-        setText(`agentCluster-${p}`, e.cluster_name || '—');
+        setText(`agentCluster-${p}`, b.cluster_name || '—');
     } else {
         setText(`agentElastic-${p}`, 'Unreachable');
         setColor(`agentElastic-${p}`, 'var(--lb-accent-soft)');

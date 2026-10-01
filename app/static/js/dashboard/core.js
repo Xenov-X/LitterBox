@@ -79,18 +79,17 @@ function applyAgentRow(agent) {
     const p = agent.name;
     const a = agent.agent || {};
     const e = agent.elastic || {};
-    // Fibratus profiles have no Elastic backend — alerts arrive via the
-    // /api/edr/fibratus/ingest push endpoint. Treat agent-up alone as healthy.
-    const isFibratus = agent.kind === 'fibratus';
+    const b = agent.backend || e;
+    const hasBackend = agent.has_correlation !== false;
 
-    if (isFibratus) {
+    if (!hasBackend) {
         setDot(p, a.reachable ? 'ok' : 'down',
-               a.reachable ? 'Agent reachable (Fibratus push)' : 'Agent unreachable');
+               a.reachable ? 'Agent reachable' : 'Agent unreachable');
     } else {
-        const reachable = (a.reachable ? 1 : 0) + (e.reachable ? 1 : 0);
-        if (reachable === 2)      setDot(p, 'ok',      'Agent + Elastic reachable');
+        const reachable = (a.reachable ? 1 : 0) + (b.reachable ? 1 : 0);
+        if (reachable === 2)      setDot(p, 'ok',      'Agent + backend reachable');
         else if (reachable === 1) setDot(p, 'partial', 'Partial — see status fields');
-        else                       setDot(p, 'down',    'Agent + Elastic unreachable');
+        else                       setDot(p, 'down',    'Agent + backend unreachable');
     }
 
     if (a.reachable) {
@@ -100,13 +99,16 @@ function applyAgentRow(agent) {
         setTag(`dashAgentSide-${p}`, 'high', 'agent down');
     }
 
-    if (isFibratus) {
-        setTag(`dashElasticSide-${p}`, 'info', 'fibratus · push');
-    } else if (e.reachable) {
-        const v = e.version ? ` v${e.version}` : '';
-        setTag(`dashElasticSide-${p}`, 'low', `elastic${v}`);
+    if (!hasBackend) {
+        const kindLabel = agent.type || agent.kind || 'exec';
+        setTag(`dashElasticSide-${p}`, 'info', `${kindLabel} · agent-only`);
+    } else if (b.reachable) {
+        const kindLabel = agent.type || 'backend';
+        const v = b.version ? ` v${b.version}` : '';
+        setTag(`dashElasticSide-${p}`, 'low', `${kindLabel}${v}`);
     } else {
-        setTag(`dashElasticSide-${p}`, 'high', 'elastic down');
+        const kindLabel = agent.type || 'backend';
+        setTag(`dashElasticSide-${p}`, 'high', `${kindLabel} down`);
     }
 }
 

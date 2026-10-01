@@ -1,12 +1,12 @@
 // app/static/js/results/tools/edr.js
 //
-// Renderer for an Elastic-EDR run dispatched to a Whiskers agent.
+// Renderer for an EDR run dispatched to a Whiskers agent.
 //
 // The orchestrator runs in two phases:
 //   Phase 1 (exec)        — sync over HTTP; returns when the agent finishes
 //                          spawning the payload (success or EDR block)
 //   Phase 2 (correlation) — async on the server (background thread);
-//                          polls Elastic for alerts, overwrites the saved
+//                          polls the backend for alerts, overwrites the saved
 //                          findings JSON when done.
 //
 // On the initial POST response we render whatever Phase 1 produced. If
@@ -15,14 +15,14 @@
 // reflect Phase 2 progress in real time. The block-vs-clean-exec
 // distinction is carried in `summary.blocked_by_av` — Phase 2 doesn't
 // fork its status on it because the polling itself is purely between
-// LitterBox and Elastic, regardless of what the EDR VM did.
+// LitterBox and the backend, regardless of what the EDR VM did.
 //
 // Targets:
 //   - #edrSummary           (summary tab)
 //   - #edrAlertsResults     (alerts tab table + stat strip)
 //   - #edrExecutionResults  (execution tab stdout/stderr block)
 //   - top-of-page status bar — we flip "Analysis completed" back to
-//     "Correlating Elastic alerts…" while polling.
+//     "Correlating alerts…" while polling.
 
 import { errorPanel, cleanState, threatState, statRow, panel, kvGrid, codeBlock, tag, escapeHtml } from './_shared.js';
 import summaryTool from './summary.js';
@@ -183,7 +183,7 @@ function renderAlerts(results) {
 
     if (status === 'partial') {
         target.innerHTML = errorPanel(
-            `Run completed but Elastic query failed (${results.sub_status || 'unknown'})`,
+            `Run completed but alert query failed (${results.sub_status || 'unknown'})`,
             { error: results.error }
         );
         return;
@@ -202,7 +202,7 @@ function renderAlerts(results) {
                     <svg width="16" height="16" fill="none" stroke="var(--lb-accent-soft)" viewBox="0 0 24 24" class="animate-spin" style="animation: lb-spin 1s linear infinite;">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                     </svg>
-                    <span class="lb-strong">Correlating Elastic alerts…</span>
+                    <span class="lb-strong">Correlating alerts…</span>
                 </div>
                 <span class="lb-muted" style="font-size: 12px;">Polling every ${POLL_INTERVAL_MS / 1000}s, max ${max}s window.${blockedHint}</span>
             </div>
@@ -215,6 +215,21 @@ function renderAlerts(results) {
             'Blocked by AV before execution',
             results.execution?.message || 'The local AV intercepted the payload before it ran. No post-run alerts to correlate.'
         );
+        return;
+    }
+
+    if (results.coverage === 'not_configured') {
+        target.innerHTML = `
+            <div class="lb-empty" style="flex-direction: column; padding: 24px 16px; gap: 8px; align-items: flex-start;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <svg width="16" height="16" fill="none" stroke="var(--lb-text-mute)" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"/>
+                    </svg>
+                    <span class="lb-strong">Detection not configured</span>
+                </div>
+                <span class="lb-muted" style="font-size: 12px;">This is an execution-only profile — no EDR backend was queried for alerts. To add detection coverage, configure a profile with an EDR backend.</span>
+            </div>`;
+        target.dataset.alertsKey = '';
         return;
     }
 
@@ -769,7 +784,7 @@ function updatePageStatus(polling) {
     const core     = window.__analysisCore;
     if (!statusEl) return;
     if (polling) {
-        statusEl.textContent = 'Correlating Elastic alerts…';
+        statusEl.textContent = 'Correlating alerts…';
         if (iconEl) {
             iconEl.innerHTML = `
                 <svg class="animate-spin" width="20" height="20" fill="none" stroke="var(--lb-accent-soft)" viewBox="0 0 24 24" style="animation: lb-spin 1s linear infinite;">
@@ -804,7 +819,7 @@ const edrModule = {
 
         // Always render summary + execution panes — they convey what we
         // know (profile, agent identity, error message) regardless of
-        // whether the run reached Elastic. The alerts pane gets the
+        // whether the run reached the backend. The alerts pane gets the
         // error panel for hard-error cases.
         renderSummary(results);
         renderExecution(results);

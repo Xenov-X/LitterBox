@@ -1,13 +1,16 @@
-"""EDR operations — Whiskers + Elastic Defend + Fibratus profiles.
+"""EDR operations — Whiskers + pluggable detection backends.
 
-Two split-phase analyzer flavours live behind one set of endpoints:
-  * `kind: elastic`  — LitterBox queries an Elastic stack for alerts.
-  * `kind: fibratus` — LitterBox polls Whiskers's event-log endpoint for
-                        Fibratus rule matches (DetonatorAgent shape).
+Supported backend kinds:
+  * ``kind: elastic``  — LitterBox queries an Elastic stack for alerts.
+  * ``kind: fibratus`` — LitterBox polls Whiskers's event-log endpoint for
+                          Fibratus rule matches (DetonatorAgent shape).
+  * ``kind: exec``     — execution-only, no detection backend.
+  * Third-party kinds registered via the ``litterbox.edr_backends``
+    entry-point group.
 
 The CLI / MCP helpers don't need to care about the kind for dispatch
-(`analyze_edr` works for both); they only diverge for the
-`fibratus_alerts_since` test helper.
+(``analyze_edr`` works for all); they only diverge for the
+``fibratus_alerts_since`` test helper.
 """
 
 import time
@@ -40,11 +43,12 @@ class EdrMixin:
         """Dispatch a payload to a registered EDR profile.
 
         Returns the Phase-1 result immediately (status='polling_alerts'
-        on a successful exec; 'blocked_by_av' / 'agent_unreachable' /
+        on a successful exec with a detection backend; 'executed' for
+        exec-only profiles; 'blocked_by_av' / 'agent_unreachable' /
         'busy' / 'error' otherwise). Phase-2 (alert correlation) runs in
-        a server-side daemon thread; poll
-        `get_edr_results(file_hash, profile)` until status is no longer
-        'polling_alerts', or use `wait_for_edr_completion` below.
+        a server-side daemon thread for backends that have one; poll
+        ``get_edr_results(file_hash, profile)`` until status is no longer
+        'polling_alerts', or use ``wait_for_edr_completion`` below.
         """
         data: Dict = {}
         if cmd_args:

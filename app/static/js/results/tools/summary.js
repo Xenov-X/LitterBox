@@ -174,6 +174,8 @@ export default {
             else if (killedByEdr && totalAlerts > 0)    detail = `Killed by EDR · ${totalAlerts} alert${totalAlerts === 1 ? '' : 's'} raised`;
             else if (killedByEdr)                       detail = 'Process exited non-zero — no correlating alerts';
             else if (totalAlerts > 0)                   detail = `${totalAlerts} alert${totalAlerts === 1 ? '' : 's'} raised`;
+            else if (r.coverage === 'not_configured')   detail = 'Executed — no detection backend configured';
+            else if (status === 'executed')              detail = 'Execution complete';
             else                                        detail = 'No alerts raised';
 
             rows.push(summaryRow({

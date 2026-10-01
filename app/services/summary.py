@@ -175,6 +175,8 @@ def process_file_summary(item, item_path, file_based_summary, logger):
                     'profile': profile_name,
                     'display_name': edr.get('display_name') or profile_name,
                     'status': edr.get('status'),
+                    'kind': edr.get('kind'),
+                    'coverage': edr.get('coverage'),
                     'total_alerts': summary.get('total_alerts') or len(edr.get('alerts') or []),
                     'high_severity_alerts': summary.get('high_severity_alerts'),
                     'blocked_by_av': summary.get('blocked_by_av'),

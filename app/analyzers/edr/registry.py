@@ -1,26 +1,28 @@
 """Profile registry — single entry point for EDR-profile dispatch.
 
 The Flask blueprints layer calls into this module rather than reaching into
-profile.py / elastic_edr_analyzer.py directly. Three responsibilities:
+profile.py or individual analyzers directly. Three responsibilities:
 
   1. Load profiles at import time so the UI can list them.
   2. Dispatch a payload to a named profile and return the analyzer's results
      (full synchronous run — used by tests and CLI).
   3. Dispatch in split-phase mode: Phase 1 returns immediately, Phase 2
-     (Elastic correlation) runs in a background thread and invokes a
+     (alert correlation) runs in a background thread and invokes a
      completion callback with the final result.
 
-The registry is a module-level singleton — profiles are loaded once when
-LitterBox boots. To pick up a new YAML, restart the app (consistent with
-the rest of the analyzer config).
+Backend selection is fully pluggable: ``init()`` calls
+``discover_backends()`` which imports every module under
+``app/analyzers/edr/backends/`` (and any ``litterbox.edr_backends``
+entry-points). Each backend self-registers its ``kind`` and the registry
+matches profiles to backends by that discriminator — no if/else dispatch.
 """
 
 import logging
 import threading
 from typing import Callable, Dict, List, Optional
 
-from .elastic_edr_analyzer import ElasticEdrAnalyzer
-from .fibratus_edr_analyzer import FibratusEdrAnalyzer
+from .backend import discover_backends, get_backend, registered_kinds
+from .base_runner import BaseEdrRunner
 from .profile import EdrProfile, load_profiles
 
 
@@ -31,12 +33,19 @@ _PROFILES: Dict[str, EdrProfile] = {}
 _LOADED = False
 
 
-def _make_analyzer(profile: EdrProfile, config: dict):
-    """Pick the right analyzer for a profile's `kind`. New analyzer types
-    plug in here — keep this the single dispatch site."""
-    if profile.kind == "fibratus":
-        return FibratusEdrAnalyzer(config, profile)
-    return ElasticEdrAnalyzer(config, profile)
+def _make_runner(profile: EdrProfile, config: dict) -> BaseEdrRunner:
+    """Construct a BaseEdrRunner wired to the correct backend for this
+    profile's ``kind``. Raises KeyError if no backend is registered for
+    the kind (should not happen — profile validation rejects unknown kinds).
+    """
+    backend_cls = get_backend(profile.kind)
+    if backend_cls is None:
+        raise KeyError(
+            f"no EDR backend registered for kind {profile.kind!r} "
+            f"(registered: {sorted(registered_kinds())})"
+        )
+    backend = backend_cls(config, profile)
+    return BaseEdrRunner(config, profile, backend)
 
 
 def init(config: dict, profiles_dir: Optional[str] = None) -> None:
@@ -46,6 +55,7 @@ def init(config: dict, profiles_dir: Optional[str] = None) -> None:
     restart, same as config.yaml).
     """
     global _LOADED, _PROFILES
+    discover_backends()
     profiles = load_profiles(profiles_dir) if profiles_dir else load_profiles()
     _PROFILES = {p.name: p for p in profiles}
     _LOADED = True
@@ -59,9 +69,10 @@ def init(config: dict, profiles_dir: Optional[str] = None) -> None:
 def list_profiles() -> List[dict]:
     """Public-facing profile list for the UI. Intentionally omits secrets
     (apikey, ingest_token) — only the operator-facing identity + agent URL
-    is returned. `kind` is included so the UI can render kind-specific
-    affordances when needed.
+    is returned. ``kind`` and ``label`` are included so the UI can render
+    kind-aware affordances and human-readable backend names.
     """
+    backends = registered_kinds()
     return [
         {
             "name": p.name,
@@ -69,6 +80,8 @@ def list_profiles() -> List[dict]:
             "agent_url": p.agent_url,
             "elastic_url": p.elastic_url,
             "kind": p.kind,
+            "kind_label": getattr(backends.get(p.kind), "label", p.kind),
+            "has_correlation": getattr(backends.get(p.kind), "has_correlation", True),
         }
         for p in _PROFILES.values()
     ]
@@ -79,25 +92,18 @@ def get_profile(name: str) -> Optional[EdrProfile]:
 
 
 def dispatch(profile_name: str, payload_path: str, config: dict) -> dict:
-    """Run one payload against `profile_name`. Returns the analyzer's
-    findings dict (see elastic_edr_analyzer for the schema). Raises
-    KeyError if the profile is not registered — callers should validate
-    against list_profiles() first.
-
-    Synchronous: blocks until BOTH Phase 1 (exec) and Phase 2 (Elastic
-    correlation) finish. Used by tests/CLI. The HTTP route uses
-    dispatch_split() so the user sees Phase 1 results immediately.
-    """
+    """Synchronous full pipeline. Blocks until both Phase 1 (exec) and
+    Phase 2 (correlation) finish. Used by tests/CLI."""
     profile = _PROFILES.get(profile_name)
     if profile is None:
         raise KeyError(f"unknown EDR profile: {profile_name!r}")
 
-    analyzer = _make_analyzer(profile, config)
-    analyzer.analyze(payload_path)
+    runner = _make_runner(profile, config)
+    runner.analyze(payload_path)
     try:
-        return analyzer.get_results()
+        return runner.get_results()
     finally:
-        analyzer.cleanup()
+        runner.cleanup()
 
 
 def dispatch_split(
@@ -110,36 +116,32 @@ def dispatch_split(
     """Split-phase dispatch.
 
     Phase 1 (lock + exec + log fetch) runs synchronously and the result is
-    returned immediately. If Phase 1 was non-terminal (the run actually
-    started or was AV-blocked), Phase 2 (poll Elastic for alerts) is
-    spawned in a background thread; when it completes, `on_phase_2_done`
-    is called with the final findings dict. The callback is responsible
-    for persisting the updated result.
+    returned immediately. If the backend has correlation (``has_correlation
+    = True``) and Phase 1 was non-terminal, Phase 2 is spawned in a
+    background thread; when it completes, ``on_phase_2_done`` is called
+    with the final findings dict.
 
-    `executable_args` is forwarded to the agent's exec endpoint as a
-    single space-separated string. For DLL payloads the first token is
-    the exported entry point (rundll32 wraps it server-side).
+    For exec-only backends (``has_correlation = False``), Phase 1 is the
+    final result — no background thread is spawned, and the callback is
+    never invoked.
 
     Phase 2 errors are swallowed and surfaced to the callback as a
-    `status: 'error'` dict — the thread never raises into nothing.
+    ``status: 'error'`` dict — the thread never raises into nothing.
     """
     profile = _PROFILES.get(profile_name)
     if profile is None:
         raise KeyError(f"unknown EDR profile: {profile_name!r}")
 
-    analyzer = _make_analyzer(profile, config)
-    phase_1, continuation = analyzer.run_exec(payload_path, executable_args)
+    runner = _make_runner(profile, config)
+    phase_1, continuation = runner.run_exec(payload_path, executable_args)
 
     if continuation is None:
-        # Terminal failure (busy, agent unreachable, missing file, etc.) —
-        # no Phase 2 to schedule. Caller still saves Phase 1 as the final
-        # result.
-        analyzer.cleanup()
+        runner.cleanup()
         return phase_1
 
     def _phase_2_runner():
         try:
-            phase_2 = analyzer.run_correlation(continuation)
+            phase_2 = runner.run_correlation(continuation)
         except Exception as exc:
             logger.exception("EDR Phase 2 thread crashed")
             phase_2 = {
@@ -148,7 +150,7 @@ def dispatch_split(
                 "error": f"Phase 2 thread crashed: {exc}",
             }
         finally:
-            analyzer.cleanup()
+            runner.cleanup()
         try:
             on_phase_2_done(phase_2)
         except Exception:

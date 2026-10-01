@@ -1,11 +1,17 @@
 """EDR profile schema + loader.
 
-A profile is one YAML file under `Config/edr_profiles/`. It binds a Whiskers
+A profile is one YAML file under ``Config/edr_profiles/``. It binds a Whiskers
 agent (on the EDR VM) to a backend (e.g. an Elastic stack) for alert
 queries. The loader scans the directory at boot and returns a list of
 validated profiles to register with the analyzer manager.
 
-Real profile files are gitignored — the repo only ships `*.example.yml`.
+Real profile files are gitignored — the repo only ships ``*.example.yml``.
+
+Field validation is dynamic: each registered backend declares its required
+and optional profile fields, plus a ``validate_profile()`` classmethod for
+backend-specific checks. The common fields (name, display_name, agent_url)
+are always required. The registry's ``init()`` calls ``discover_backends()``
+before ``load_profiles()``, so backends are available at validation time.
 """
 
 import logging
@@ -26,12 +32,31 @@ class EdrProfileError(ValueError):
     """Profile YAML failed validation. Message names the field at fault."""
 
 
-# Recognized profile kinds.
-#   `elastic`  — LitterBox queries an Elastic Defend / Detection-Engine cluster.
-#   `fibratus` — LitterBox polls Whiskers's GET /api/alerts/fibratus/since,
-#                which wevtutil-queries the EDR VM's Application event log
-#                for `Provider=Fibratus` alert records (DetonatorAgent shape).
-_PROFILE_KINDS = {"elastic", "fibratus"}
+def _get_valid_kinds():
+    """Return the set of registered backend kinds."""
+    try:
+        from .backend import registered_kinds
+        return set(registered_kinds().keys())
+    except ImportError:
+        return None
+
+
+def _get_backend_cls(kind: str):
+    """Return the backend class for a kind, or None if not registered."""
+    try:
+        from .backend import get_backend
+        return get_backend(kind)
+    except ImportError:
+        return None
+
+
+def _get_backend_fields(kind: str):
+    """Return (required_fields, optional_fields) for a backend kind, or
+    ((), ()) if the backend isn't registered yet."""
+    cls = _get_backend_cls(kind)
+    if cls is None:
+        return (), ()
+    return cls.required_profile_fields, cls.optional_profile_fields
 
 
 @dataclass
@@ -39,22 +64,13 @@ class EdrProfile:
     name: str
     display_name: str
     agent_url: str
-    # `kind` discriminates analyzer behavior. Defaults to "elastic" so older
-    # profile YAMLs (no `kind` key) keep working unchanged.
     kind: str = "elastic"
 
-    # Elastic-only fields. Required when kind=elastic, ignored when kind=fibratus.
     elastic_url: Optional[str] = None
     elastic_apikey: Optional[str] = None
     elastic_verify_tls: bool = False
 
     wait_seconds_for_alerts: int = 90
-    # Max polling window for the AV-block path. The orchestrator polls
-    # Elastic every 2s and early-returns as soon as the prevention alert
-    # is indexed. End-to-end latency is dominated by the agent's shipping
-    # cadence (30s default) plus Elastic's refresh interval — 60s budget
-    # covers the slow tail, but the early-return makes the typical case
-    # much faster.
     av_block_wait_seconds: int = 60
     exec_timeout_seconds: int = 60
     drop_path: Optional[str] = None
@@ -68,24 +84,23 @@ class EdrProfile:
             )
 
         kind = (data.get("kind") or "elastic").strip().lower()
-        if kind not in _PROFILE_KINDS:
+
+        valid_kinds = _get_valid_kinds()
+        if valid_kinds is not None and kind not in valid_kinds:
             raise EdrProfileError(
-                f"unknown profile kind {kind!r} — must be one of {sorted(_PROFILE_KINDS)}"
+                f"unknown profile kind {kind!r} — must be one of {sorted(valid_kinds)}"
             )
 
         common_required = ("name", "display_name", "agent_url")
-        if kind == "elastic":
-            required = common_required + ("elastic_url", "elastic_apikey")
-        else:  # fibratus — no extra fields, just the Whiskers agent URL
-            required = common_required
+        backend_required, _ = _get_backend_fields(kind)
+        required = common_required + tuple(backend_required)
         missing = [k for k in required if not data.get(k)]
         if missing:
             raise EdrProfileError(f"missing required field(s): {', '.join(missing)}")
 
-        if kind == "elastic" and data["elastic_apikey"].startswith("REPLACE_ME"):
-            raise EdrProfileError(
-                "elastic_apikey is still the example placeholder — fill it in"
-            )
+        backend_cls = _get_backend_cls(kind)
+        if backend_cls is not None:
+            backend_cls.validate_profile(data)
 
         return cls(
             name=data["name"],
@@ -104,7 +119,7 @@ class EdrProfile:
 
 
 def load_profiles(profiles_dir: str = PROFILES_DIR) -> List[EdrProfile]:
-    """Scan `profiles_dir` for *.yml (excluding *.example.yml) and return a
+    """Scan ``profiles_dir`` for *.yml (excluding *.example.yml) and return a
     list of validated profiles. A malformed file is logged and skipped — one
     bad profile must not prevent the others from loading.
     """

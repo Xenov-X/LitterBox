@@ -35,7 +35,7 @@ mcp = FastMCP(
     name="LitterBox",
     instructions=(
         "Tools for the LitterBox payload-analysis sandbox: upload payloads / drivers, "
-        "run static / dynamic / EDR (Whiskers + Elastic Defend) analysis, retrieve "
+        "run static / dynamic / EDR (Whiskers + pluggable detection backends) analysis, retrieve "
         "results, and generate reports. Also exposes system health (registered EDR "
         "agent reachability, configured scanner inventory). Use the prompts for "
         "OPSEC review of analysis output. Tool exceptions are surfaced to the client "
@@ -180,7 +180,7 @@ async def download_report(
 
 
 # =============================================================================
-# EDR — Whiskers agent + Elastic Defend correlation
+# EDR — Whiskers agent + pluggable detection backends
 # =============================================================================
 
 @mcp.tool()
@@ -205,13 +205,14 @@ async def analyze_edr(
     wait: Annotated[bool, Field(description="Block until Phase-2 (Elastic alert correlation) settles.")] = True,
     timeout: Annotated[float, Field(description="Phase-2 wait timeout in seconds.", ge=10, le=600)] = 180.0,
 ) -> dict:
-    """Dispatch a payload to a registered EDR profile (Whiskers agent + Elastic Defend).
+    """Dispatch a payload to a registered EDR profile (Whiskers agent + detection backend).
 
     Note: this EXECUTES the payload on the EDR VM. Confirm with the user first.
 
     Two-phase: Phase-1 (synchronous) handles agent dispatch + lock + execution; Phase-2
-    (server-side daemon) correlates Elastic alerts. With wait=True, the server returns
-    once Phase-2 settles or `timeout` elapses.
+    (server-side daemon) correlates alerts via the profile's backend. Exec-only profiles
+    (kind=exec) have no Phase-2. With wait=True, the server returns once Phase-2 settles
+    or `timeout` elapses.
     """
     phase1 = await _call(client.analyze_edr, file_hash, profile, cmd_args=cmd_args, xor_key=xor_key)
     if not wait or (phase1 or {}).get('status') != 'polling_alerts':
