@@ -48,6 +48,7 @@ struct ExecForm {
     drop_path: String,
     executable_args: Option<String>,
     xor_key: Option<u8>,
+    launcher: Option<String>,
 }
 
 pub async fn exec(
@@ -109,19 +110,40 @@ pub async fn exec(
     // should have called kill, but if it didn't, don't leave orphans).
     take_previous_run_for_cleanup(&state).await;
 
-    // Spawn the payload. Windows can't directly exec a `.dll` — those need
-    // to go through `rundll32.exe <dll>,<entry-point> [args...]`. The
-    // entry point is required and comes from `executable_args`; if it's
-    // missing we bail with a clear error instead of letting Windows
-    // return ERROR_BAD_EXE_FORMAT.
-    let is_dll = file_path
+    // Spawn the payload. Three paths:
+    //
+    //  1. **Launcher** — orchestrator specified a host binary (e.g. msiexec,
+    //     wscript, powershell). We spawn `launcher` with `executable_args`
+    //     after replacing `{sample}` with the on-disk drop path.
+    //
+    //  2. **DLL** — Windows can't directly exec a `.dll`; we wrap with
+    //     `rundll32.exe <dll>,<entry-point> [args...]`.  The entry point is
+    //     required and comes from `executable_args`.
+    //
+    //  3. **Direct** — spawn the file itself with any supplied args.
+    let executable_args = form.executable_args.as_deref().unwrap_or("").trim();
+    let sample_path_str = file_path.display().to_string();
+
+    let mut command = if let Some(ref launcher) = form.launcher {
+        // Path 1: launcher-based spawn.
+        let resolved_args = executable_args.replace("{sample}", &sample_path_str);
+        tracing::info!(
+            launcher = %launcher,
+            args = %resolved_args,
+            sample = %sample_path_str,
+            "Spawning via launcher"
+        );
+        let mut c = Command::new(launcher);
+        if !resolved_args.is_empty() {
+            c.args(parse_args(&resolved_args));
+        }
+        c
+    } else if file_path
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.eq_ignore_ascii_case("dll"))
-        .unwrap_or(false);
-    let executable_args = form.executable_args.as_deref().unwrap_or("").trim();
-
-    let mut command = if is_dll {
+        .unwrap_or(false)
+    {
         if executable_args.is_empty() {
             tracing::error!("DLL spawn rejected: no entry point provided in executable_args");
             let _ = tokio::fs::remove_file(&file_path).await;
@@ -139,8 +161,8 @@ pub async fn exec(
         let mut tokens = executable_args.split_whitespace();
         let entry = tokens.next().unwrap();   // checked non-empty above
         let rest: Vec<&str> = tokens.collect();
-        let dll_target = format!("{},{}", file_path.display(), entry);
-        tracing::info!(dll = %file_path.display(), entry, "Spawning DLL via rundll32");
+        let dll_target = format!("{},{}", sample_path_str, entry);
+        tracing::info!(dll = %sample_path_str, entry, "Spawning DLL via rundll32");
         let mut c = Command::new("rundll32.exe");
         c.arg(dll_target);
         for r in rest { c.arg(r); }
@@ -419,6 +441,7 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
     let mut drop_path = String::new();
     let mut executable_args: Option<String> = None;
     let mut xor_key: Option<u8> = None;
+    let mut launcher: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -466,6 +489,15 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
                 }
                 xor_key = Some(n as u8);
             }
+            "launcher" => {
+                let s = field
+                    .text()
+                    .await
+                    .map_err(|e| format!("launcher read error: {e}"))?;
+                if !s.is_empty() {
+                    launcher = Some(s);
+                }
+            }
             "execution_mode" => {
                 // Currently ignored — only "exec" mode supported. Accepted for
                 // forward compatibility with DetonatorAgent's protocol.
@@ -484,5 +516,6 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
         drop_path,
         executable_args,
         xor_key,
+        launcher,
     })
 }

@@ -100,6 +100,7 @@ class AgentClient:
         drop_path: Optional[str] = None,
         executable_args: Optional[str] = None,
         xor_key: Optional[int] = None,
+        launcher: Optional[str] = None,
     ) -> dict:
         """Send a payload over multipart and spawn it on the EDR VM.
 
@@ -117,6 +118,10 @@ class AgentClient:
         `xor_key` is a single byte (0-255). When supplied, Whiskers applies
         it byte-by-byte as it writes the payload to disk (anti-AV-in-transit).
         Caller must XOR-encode `file_bytes` with the same key beforehand.
+
+        `launcher` is a host binary (e.g. ``msiexec``, ``wscript``) that
+        Whiskers spawns instead of the sample. ``{sample}`` in
+        ``executable_args`` is replaced with the on-VM drop path.
         """
         if xor_key is not None and not 0 <= xor_key <= 255:
             raise ValueError(f"xor_key must be a single byte 0-255, got {xor_key}")
@@ -129,6 +134,8 @@ class AgentClient:
             data["executable_args"] = executable_args
         if xor_key is not None:
             data["xor_key"] = str(xor_key)
+        if launcher:
+            data["launcher"] = launcher
 
         url = f"{self.agent_url}/api/execute/exec"
         try:

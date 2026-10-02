@@ -42,7 +42,7 @@
         <div class="lb-panel-hdr"><span class="lb-glyph">▸</span>Drop Payload</div>
         <div class="lb-panel-body">
             <div id="dropZone">
-                <input type="file" id="fileInput" class="hidden" accept=".exe,.dll,.bin,.docx,.xlsx,.lnk,.sys"/>
+                <input type="file" id="fileInput" class="hidden" accept="{% for ext in config.utils.allowed_extensions %}.{{ ext }}{% if not loop.last %},{% endif %}{% endfor %}"/>
                 <label for="fileInput" class="lb-upload-zone" style="display: block;">
                     <svg class="lb-upload-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
@@ -118,7 +118,7 @@
                 <div>
                     <label for="allAnalysisArgs" class="lb-eyebrow" style="display: block; margin-bottom: 6px;">Command-line Arguments</label>
                     <input type="text" id="allAnalysisArgs" placeholder="Enter arguments separated by spaces" class="lb-input lb-mono"/>
-                    <p class="lb-muted" style="margin-top: 6px; font-size: 12px;">Shared across the dynamic + EDR runs. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span> on both sides.</p>
+                    <p id="allArgsHint" class="lb-muted" style="margin-top: 6px; font-size: 12px;">Shared across the dynamic + EDR runs. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span> on both sides.</p>
                 </div>
                 <button type="button" onclick="selectAnalysisType('all')" class="lb-mode-cta">
                     Run All
@@ -185,7 +185,7 @@
                     <label for="edrArgs-{{ profile.name }}" class="lb-eyebrow" style="display: block; margin-bottom: 6px;">Command-line Arguments</label>
                     <input type="text" id="edrArgs-{{ profile.name }}" data-edr-args="{{ profile.name }}"
                            placeholder="Enter arguments separated by spaces" class="lb-input lb-mono"/>
-                    <p class="lb-muted" style="margin-top: 6px; font-size: 12px;">Forwarded to the spawned process on the EDR VM. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span>.</p>
+                    <p id="edrArgsHint-{{ profile.name }}" class="lb-muted" style="margin-top: 6px; font-size: 12px;">Forwarded to the spawned process on the EDR VM. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span>.</p>
                 </div>
                 <button type="button" onclick="selectAnalysisType('edr:{{ profile.name }}')" class="lb-mode-cta">
                     Run with {{ profile.display_name }}
@@ -386,7 +386,8 @@
     window.serverConfig = {
         maxFileSize: {{ config.utils.max_file_size }},
         maxFileSizeMB: {{ (config.utils.max_file_size / 1024 / 1024) | round(1) }},
-        allowedExtensions: {{ config.utils.allowed_extensions | tojson }}
+        allowedExtensions: {{ config.utils.allowed_extensions | tojson }},
+        launchers: {{ config.utils.get('launchers', {}) | tojson }}
     };
 </script>
 

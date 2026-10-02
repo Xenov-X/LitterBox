@@ -253,6 +253,22 @@ class BaseEdrRunner(BaseAnalyzer):
         }
         return phase_1, continuation
 
+    @staticmethod
+    def _resolve_launcher(config: dict, filename: str):
+        """Look up the launcher config for a file's extension.
+
+        Returns ``(launcher_cmd, resolved_args)`` where *launcher_cmd* is the
+        host binary (e.g. ``"msiexec"``) or ``None`` for direct-exec types,
+        and *resolved_args* is the default args template (containing
+        ``{sample}``) when the operator hasn't supplied their own.
+        """
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        launchers = (config.get("utils") or {}).get("launchers") or {}
+        entry = launchers.get(ext)
+        if not entry:
+            return None, None
+        return entry.get("command"), entry.get("default_args")
+
     def _run_locked(
         self,
         file_bytes: bytes,
@@ -262,6 +278,10 @@ class BaseEdrRunner(BaseAnalyzer):
         run_start: datetime,
         agent_info: dict,
     ) -> dict:
+        launcher, default_args = self._resolve_launcher(self.config, filename)
+        if launcher and not executable_args:
+            executable_args = default_args
+
         xor_key = secrets.randbelow(256)
         xor_table = bytes(b ^ xor_key for b in range(256))
         xored = file_bytes.translate(xor_table)
@@ -272,6 +292,7 @@ class BaseEdrRunner(BaseAnalyzer):
                 drop_path=self.profile.drop_path,
                 executable_args=executable_args,
                 xor_key=xor_key,
+                launcher=launcher,
             )
         except AgentUnreachable as exc:
             return {**self._unreachable_result(exc), "_final": True}

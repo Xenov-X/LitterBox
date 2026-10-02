@@ -214,6 +214,36 @@ document.addEventListener('DOMContentLoaded', function() {
         'xlsx', 'xlsm', 'xltm', 'xls',
     ]);
     const HTML_EXTS = new Set(['html', 'htm']);
+    const launchers = (window.serverConfig && window.serverConfig.launchers) || {};
+
+    function setArgsHint(input, hint, lc, ext) {
+        if (lc) {
+            input.placeholder = lc.default_args || '{sample}';
+            if (hint) {
+                hint.innerHTML =
+                    `Launched via <span class="lb-mono lb-strong">${lc.command}</span>. ` +
+                    `Use <span class="lb-mono">{sample}</span> for the file path on the VM. ` +
+                    `Leave blank for the default shown above.`;
+            }
+        } else if (ext === 'dll') {
+            input.placeholder = 'ExportedFunction [args...]';
+            if (hint) {
+                hint.innerHTML =
+                    'The first argument is the exported entry point ' +
+                    '(e.g. <span class="lb-mono">DllMain</span>) — ' +
+                    'passed to <span class="lb-mono">rundll32.exe</span>.';
+            }
+        } else {
+            input.placeholder = 'Enter arguments separated by spaces';
+            if (hint) {
+                hint.innerHTML =
+                    'Forwarded to the spawned process on the EDR VM. ' +
+                    '<span class="lb-strong">For DLL files</span> the first argument ' +
+                    'is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) ' +
+                    '— passed to <span class="lb-mono">rundll32.exe</span>.';
+            }
+        }
+    }
 
     function updateAnalysisOptions(fileExtension) {
         const ext = (fileExtension || '').toLowerCase();
@@ -244,6 +274,18 @@ document.addEventListener('DOMContentLoaded', function() {
             bodies.forEach(b => b.classList.add('hidden'));
             const target = document.querySelector(`.lb-mode-body[data-mode="${firstVisible.dataset.mode}"]`);
             if (target) target.classList.remove('hidden');
+        }
+
+        // Update args placeholders / hints for launcher-backed file types.
+        const lc = launchers[ext];
+        document.querySelectorAll('[data-edr-args]').forEach(input => {
+            const hint = document.getElementById(`edrArgsHint-${input.dataset.edrArgs}`);
+            setArgsHint(input, hint, lc, ext);
+        });
+
+        const allArgs = document.getElementById('allAnalysisArgs');
+        if (allArgs) {
+            setArgsHint(allArgs, allArgs.nextElementSibling, lc, ext);
         }
     }
 

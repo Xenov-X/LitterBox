@@ -38,6 +38,13 @@ class FileTypeDetector:
 
     PE_MACHINES = {0x14c: "x86", 0x8664: "x64", 0x1c0: "ARM", 0xaa64: "ARM64"}
 
+    # Extension-based families for types without reliable magic bytes.
+    _EXT_FAMILIES = {
+        '.html': 'html', '.htm': 'html',
+        '.msi': 'script', '.js': 'script', '.vbs': 'script',
+        '.ps1': 'script', '.bat': 'script', '.cmd': 'script', '.hta': 'script',
+    }
+
     @classmethod
     def detect_file_type(cls, filepath):
         try:
@@ -54,11 +61,9 @@ class FileTypeDetector:
             elif header.startswith(cls.LNK_HEADER):
                 return cls._detect_lnk_type(filepath)
 
-            # HTML / HTM detection -- file-extension based since HTML has no
-            # consistent magic. Cheap to check after the binary-header tests
-            # already missed.
-            if p.suffix.lower() in ('.html', '.htm'):
-                return {"family": "html", "type": p.suffix.lower().lstrip('.')}
+            ext_lower = p.suffix.lower()
+            if ext_lower in cls._EXT_FAMILIES:
+                return {"family": cls._EXT_FAMILIES[ext_lower], "type": ext_lower.lstrip('.')}
 
             return {"family": "unknown", "type": "unknown"}
 
