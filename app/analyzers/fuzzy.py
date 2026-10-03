@@ -1,5 +1,6 @@
 # app/analyzers/fuzzy.py
 
+import pyssdeep
 import json
 import os
 import hashlib
@@ -370,7 +371,6 @@ class FuzzyHashAnalyzer:
                 if not data:
                     break
                 try:
-                    import pyssdeep
                     hash_value = pyssdeep.fuzzy_hash_buf(data, len(data))
                     block_data = BlockData(data, index * self.block_size)
                     blocks.append(BlockMetadata(index, self.block_size, hash_value, block_data))
@@ -461,7 +461,6 @@ class FuzzyHashAnalyzer:
                     current = per_file.get(file_key, {}).get(i)
                     if current is not None and current[0] >= 100:
                         continue
-                    import pyssdeep
                     similarity = pyssdeep.fuzzy_compare(b1.hash, ref[2].hash)
                     if similarity > 0 and (current is None or similarity > current[0]):
                         per_file.setdefault(file_key, {})[i] = (similarity, ref[2])
