@@ -47,6 +47,7 @@ def test_run_tool_decodes_utf8():
     assert rc == 0 and 'Н' in out
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX pipe semantics')
 def test_output_drain_keeps_chatty_child_running():
     # 5 MB of output: without a drain the child blocks on a full pipe.
     proc = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdout.write("x" * 5_000_000); sys.stdout.flush()'],

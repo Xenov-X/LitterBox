@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python deps
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest-timeout
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --timeout=60
