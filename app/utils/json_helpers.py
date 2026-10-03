@@ -2,8 +2,41 @@
 """JSON I/O, formatting, and detection-count extraction helpers."""
 import json
 import os
+import tempfile
+import time
 
 from .risk_analyzer import moneta_detection_count
+
+
+def write_json_atomic(filepath, data, retries=5):
+    """Write JSON so readers never see a partial file.
+
+    Writes a sibling temp file and os.replace()s it over the target. On
+    Windows the replace fails with PermissionError while another thread
+    has the target open for reading; retry briefly before giving up.
+    """
+    directory = os.path.dirname(filepath) or '.'
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix='.' + os.path.basename(filepath) + '.', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        for attempt in range(retries):
+            try:
+                os.replace(tmp_path, filepath)
+                return
+            except PermissionError:
+                if attempt == retries - 1:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def load_json_file(filepath):
