@@ -19,4 +19,5 @@ jobs:
         run: pip install -r requirements.txt pytest-timeout
 
       - name: Run tests
+        timeout-minutes: 5
         run: pytest tests/ -v --tb=short --timeout=60
