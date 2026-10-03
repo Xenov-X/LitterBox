@@ -16,6 +16,7 @@ class ReportsMixin:
     def get_report(self, target: str, download: bool = False) -> Union[str, bytes]:
         """Fetch the analysis report. Returns the HTML string by default,
         or raw bytes when `download=True` (useful for piping)."""
+        target = self._validate_target(target)
         params = {"download": "true" if download else "false"}
         response = self._make_request("GET", f"/api/report/{target}", params=params)
         return response.content if download else response.text
@@ -25,6 +26,7 @@ class ReportsMixin:
 
         Streams chunks to disk so multi-MB reports don't sit in memory.
         """
+        target = self._validate_target(target)
         response = self._make_request(
             "GET", f"/api/report/{target}",
             params={"download": "true"}, stream=True,

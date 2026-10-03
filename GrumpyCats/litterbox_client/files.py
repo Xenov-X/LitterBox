@@ -28,10 +28,14 @@ class FilesMixin:
 
     def validate_process(self, pid) -> Dict:
         """Validate that a PID exists and is accessible for dynamic analysis."""
+        pid = str(pid)
+        if not pid.isdigit():
+            raise ValueError(f"pid must be numeric, got {pid!r}")
         response = self._make_request("POST", f"/validate/{pid}")
         return response.json()
 
     def delete_file(self, file_hash: str) -> Dict:
         """Delete a file and all of its analysis results."""
+        file_hash = self._validate_target(file_hash)
         response = self._make_request("DELETE", f"/file/{file_hash}")
         return response.json()

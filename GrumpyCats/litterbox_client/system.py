@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict
 
 import requests
-from urllib.parse import urljoin
 
 from .exceptions import LitterBoxAPIError, LitterBoxError
 
@@ -17,7 +16,7 @@ class SystemMixin:
         """Lightweight liveness probe of the LitterBox service.
         Bypasses the Session's retry adapter — we want a fast yes/no,
         not a probe that retries through transient failures."""
-        url = urljoin(self.base_url, "/health")
+        url = self.base_url + "/health"
         try:
             response = requests.get(url, timeout=self.timeout, verify=self.verify_ssl)
             if response.status_code in (200, 503):  # OK and degraded both valid
