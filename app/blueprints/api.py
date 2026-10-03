@@ -27,7 +27,7 @@ _RESULT_FILES = {
 
 
 @api_bp.route(
-    "/api/results/<any(info,static,dynamic,holygrail):result_type>/<target>",
+    "/api/results/<any(info,static,dynamic,holygrail):result_type>/<target:target>",
     methods=['GET'],
 )
 @error_handler
@@ -75,7 +75,7 @@ def api_edr_profiles():
     return jsonify({'profiles': deps.edr_registry.list_profiles()})
 
 
-@api_bp.route('/api/edr/fibratus/<profile>/alerts/since', methods=['GET'])
+@api_bp.route('/api/edr/fibratus/<profile:profile>/alerts/since', methods=['GET'])
 @error_handler
 def api_fibratus_alerts_passthrough(profile):
     """Test/debug passthrough — query the Whiskers agent's
@@ -133,7 +133,7 @@ def api_edr_agents_status():
     return jsonify(edr_health.get_status_snapshot(profiles, force_refresh=force))
 
 
-@api_bp.route('/api/results/edr/<profile>/<target>', methods=['GET'])
+@api_bp.route('/api/results/edr/<profile:profile>/<target:target>', methods=['GET'])
 @error_handler
 def api_edr_results(target, profile):
     """Read the saved findings for a specific EDR profile run on `target`."""
@@ -151,7 +151,7 @@ def api_edr_results(target, profile):
         return jsonify(json.load(f))
 
 
-@api_bp.route('/api/results/edr/<target>', methods=['GET'])
+@api_bp.route('/api/results/edr/<target:target>', methods=['GET'])
 @error_handler
 def api_edr_index(target):
     """List which EDR profiles have saved results for `target`."""
@@ -168,7 +168,7 @@ def api_edr_index(target):
     return jsonify({'profiles': sorted(profiles)})
 
 
-@api_bp.route('/api/results/risk/<target>', methods=['GET'])
+@api_bp.route('/api/results/risk/<target:target>', methods=['GET'])
 @error_handler
 def api_risk_assessment(target):
     """Return the computed detection assessment (score, level, triggering indicators) for a target."""
@@ -192,7 +192,7 @@ def api_risk_assessment(target):
     })
 
 
-@api_bp.route('/api/report/<target>', methods=['GET'])
+@api_bp.route('/api/report/<target:target>', methods=['GET'])
 @error_handler
 def generate_report(target):
     app = current_app
@@ -234,7 +234,7 @@ def generate_report(target):
     return html_report
 
 
-@api_bp.route('/report/<target>', methods=['GET'])
+@api_bp.route('/report/<target:target>', methods=['GET'])
 @error_handler
 def report_page(target):
     """Convenience alias — redirects to the download form of /api/report/<target>.

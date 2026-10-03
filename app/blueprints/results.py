@@ -15,7 +15,7 @@ def _deps():
     return current_app.extensions['litterbox']
 
 
-@results_bp.route('/results/edr/<profile>/<target>', methods=['GET'])
+@results_bp.route('/results/edr/<profile:profile>/<target:target>', methods=['GET'])
 @error_handler
 def get_edr_saved_results(profile, target):
     """Saved-data view of an EDR run — does NOT re-dispatch to Whiskers.
@@ -68,7 +68,7 @@ def _cap_saved_stdio(edr_results: dict, cap: int = 256 * 1024) -> dict:
     return edr_results
 
 
-@results_bp.route('/results/<analysis_type>/<target>', methods=['GET'])
+@results_bp.route('/results/<any(info, static, dynamic, byovd):analysis_type>/<target:target>', methods=['GET'])
 @error_handler
 def get_analysis_results(target, analysis_type):
     app = current_app

@@ -1,5 +1,7 @@
 // app/static/js/fuzzy.js
 
+import { escapeHtml as esc } from './utils/escape.js';
+
 class FuzzyAnalyzer {
     constructor() {
         // Only initialize if we're in fuzzy mode
@@ -396,13 +398,13 @@ class FuzzyAnalyzer {
         loading: (message) => `
             <div class="flex items-center justify-center p-4">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-red-500"></div>
-                <span class="ml-2 text-gray-400">${message}</span>
+                <span class="ml-2 text-gray-400">${esc(message)}</span>
             </div>
         `,
 
         error: (message) => `
             <div class="bg-red-900/20 border border-red-900/50 text-red-400 px-4 py-3 rounded">
-                Error: ${message}
+                Error: ${esc(message)}
             </div>
         `,
 
@@ -421,11 +423,11 @@ class FuzzyAnalyzer {
                     <div class="space-y-2 text-sm">
                         <div>
                             <span class="text-gray-400">Database Size:</span>
-                            <span class="text-gray-100 ml-2">${stats.db_size_human}</span>
+                            <span class="text-gray-100 ml-2">${esc(stats.db_size_human)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Last Updated:</span>
-                            <span class="text-gray-100 ml-2">${stats.last_updated}</span>
+                            <span class="text-gray-100 ml-2">${esc(stats.last_updated)}</span>
                         </div>
                     </div>
                 </div>
@@ -434,11 +436,11 @@ class FuzzyAnalyzer {
                     <div class="space-y-2 text-sm">
                         <div>
                             <span class="text-gray-400">Total Files:</span>
-                            <span class="text-gray-100 ml-2">${stats.total_files}</span>
+                            <span class="text-gray-100 ml-2">${esc(stats.total_files)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Total Files Size:</span>
-                            <span class="text-gray-100 ml-2">${stats.total_size_human}</span>
+                            <span class="text-gray-100 ml-2">${esc(stats.total_size_human)}</span>
                         </div>
                     </div>
                 </div>
@@ -459,7 +461,7 @@ class FuzzyAnalyzer {
                     <div class="space-y-2 text-sm sources-list" style="max-height: 100px; overflow: hidden; transition: max-height 0.3s ease-in-out">
                         ${Object.entries(stats.sources).map(([source, data]) => `
                             <div>
-                                <span class="text-yellow-400">${source}</span>
+                                <span class="text-yellow-400">${esc(source)}</span>
                             </div>
                         `).join('')}
                     </div>
@@ -513,16 +515,16 @@ class FuzzyAnalyzer {
                         ${Object.entries(files).map(([id, file], index) => `
                             <tr class="${index % 2 === 0 ? 'bg-gray-900/30' : 'bg-gray-800/30'}">
                                 <td class="px-6 py-4">
-                                    <span class="text-gray-200">${file.filename}</span>
+                                    <span class="text-gray-200">${esc(file.filename)}</span>
                                 </td>
                                 <td class="px-6 py-4">
-                                    <span class="text-sm text-gray-500 font-mono">${file.md5}</span>
+                                    <span class="text-sm text-gray-500 font-mono">${esc(file.md5)}</span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
-                                    ${file.upload_time}
+                                    ${esc(file.upload_time)}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    <button onclick="fuzzyAnalyzer.analyzeFile('${file.md5}')"
+                                    <button data-md5="${esc(file.md5)}" onclick="fuzzyAnalyzer.analyzeFile(this.dataset.md5)"
                                             class="px-3 py-1 text-blue-400 border border-blue-900/20 rounded-lg hover:bg-blue-500/10 transition-colors">
                                         Compare
                                     </button>
@@ -541,19 +543,19 @@ class FuzzyAnalyzer {
                     <div class="grid grid-cols-2 gap-4 text-sm">
                         <div>
                             <span class="text-gray-400">Processed Files:</span>
-                            <span class="text-gray-100 ml-2">${data.stats.processed}</span>
+                            <span class="text-gray-100 ml-2">${esc(data.stats.processed)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Skipped Files:</span>
-                            <span class="text-gray-100 ml-2">${data.stats.skipped}</span>
+                            <span class="text-gray-100 ml-2">${esc(data.stats.skipped)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Total Files:</span>
-                            <span class="text-gray-100 ml-2">${data.stats.total}</span>
+                            <span class="text-gray-100 ml-2">${esc(data.stats.total)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Sources:</span>
-                            <span class="text-gray-100 ml-2">${data.stats.sources.join(', ') || 'None'}</span>
+                            <span class="text-gray-100 ml-2">${esc(data.stats.sources.join(', ') || 'None')}</span>
                         </div>
                     </div>
                 </div>
@@ -571,23 +573,23 @@ class FuzzyAnalyzer {
 
             return data.results.map(result => `
                 <div class="p-4 bg-gray-700/50 rounded-lg mb-4">
-                    <h3 class="text-lg font-medium text-gray-100 mb-2">Results for: ${result.file}</h3>
+                    <h3 class="text-lg font-medium text-gray-100 mb-2">Results for: ${esc(result.file)}</h3>
                     <div class="space-y-2 text-sm">
                         <div>
                             <span class="text-gray-400">MD5:</span>
-                            <span class="text-gray-100 ml-2 font-mono">${result.md5}</span>
+                            <span class="text-gray-100 ml-2 font-mono">${esc(result.md5)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">File Size:</span>
-                            <span class="text-gray-100 ml-2">${result.file_size} bytes</span>
+                            <span class="text-gray-100 ml-2">${esc(result.file_size)} bytes</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Total Blocks in File:</span>
-                            <span class="text-gray-100 ml-2">${result.total_blocks}</span>
+                            <span class="text-gray-100 ml-2">${esc(result.total_blocks)}</span>
                         </div>
                         <div>
                             <span class="text-gray-400">Matches Found:</span>
-                            <span class="text-gray-100 ml-2">${result.total_matches} files</span>
+                            <span class="text-gray-100 ml-2">${esc(result.total_matches)} files</span>
                         </div>
                     </div>
                     ${this.templates.matches(result.matches, result.total_blocks)}
@@ -606,8 +608,8 @@ class FuzzyAnalyzer {
                             <div class="p-4 border-b border-gray-700">
                                 <div class="flex justify-between items-start mb-2">
                                     <div>
-                                        <div class="text-gray-100">${match.file}</div>
-                                        <div class="text-sm text-gray-400">Source: ${match.source}</div>
+                                        <div class="text-gray-100">${esc(match.file)}</div>
+                                        <div class="text-sm text-gray-400">Source: ${esc(match.source)}</div>
                                     </div>
                                     <div class="text-right">
                                         <div class="text-2xl font-bold ${this.getSimilarityColor(match.overall_similarity)}">
@@ -619,19 +621,19 @@ class FuzzyAnalyzer {
                                 <div class="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span class="text-gray-400">Target Size:</span>
-                                        <span class="text-gray-100 ml-2">${match.target_size} bytes</span>
+                                        <span class="text-gray-100 ml-2">${esc(match.target_size)} bytes</span>
                                     </div>
                                     <div>
                                         <span class="text-gray-400">MD5:</span>
-                                        <span class="text-gray-100 ml-2 font-mono">${match.md5}</span>
+                                        <span class="text-gray-100 ml-2 font-mono">${esc(match.md5)}</span>
                                     </div>
                                     <div>
                                         <span class="text-gray-400">Added:</span>
-                                        <span class="text-gray-100 ml-2">${match.date_added}</span>
+                                        <span class="text-gray-100 ml-2">${esc(match.date_added)}</span>
                                     </div>
                                     <div>
                                         <span class="text-gray-400">Matching Regions:</span>
-                                        <span class="text-gray-100 ml-2">${match.total_regions} out of ${totalBlocks}</span>
+                                        <span class="text-gray-100 ml-2">${esc(match.total_regions)} out of ${totalBlocks}</span>
                                     </div>
                                 </div>
                             </div>
@@ -690,7 +692,7 @@ class FuzzyAnalyzer {
                                 Database File Contents
                             </div>
                             <div class="overflow-x-auto bg-gray-900/50 rounded-b-lg p-3">
-                                <pre class="font-mono text-xs leading-relaxed whitespace-pre text-gray-300 content-block" style="max-height: 100px; overflow: hidden; transition: max-height 0.3s ease-in-out">${this.formatHexView(region.target_data)}</pre>
+                                <pre class="font-mono text-xs leading-relaxed whitespace-pre text-gray-300 content-block" style="max-height: 100px; overflow: hidden; transition: max-height 0.3s ease-in-out">${esc(this.formatHexView(region.target_data))}</pre>
                             </div>
                         </div>
                         <!-- Payload File Data -->
@@ -702,7 +704,7 @@ class FuzzyAnalyzer {
                                 Payload File Contents (Being Analyzed)
                             </div>
                             <div class="overflow-x-auto bg-gray-900/50 rounded-b-lg p-3">
-                                <pre class="font-mono text-xs leading-relaxed whitespace-pre text-gray-300 content-block" style="max-height: 100px; overflow: hidden; transition: max-height 0.3s ease-in-out">${this.formatHexView(region.source_data)}</pre>
+                                <pre class="font-mono text-xs leading-relaxed whitespace-pre text-gray-300 content-block" style="max-height: 100px; overflow: hidden; transition: max-height 0.3s ease-in-out">${esc(this.formatHexView(region.source_data))}</pre>
                             </div>
                         </div>
                     </div>

@@ -122,9 +122,6 @@ document.addEventListener('DOMContentLoaded', () => {
       toast('No hash available to copy', 'warning');
     }
   });
-  localStorage.setItem('currentFileExtension', 'sys');
-
-  // ADD THE FUNCTION HERE
   function runStaticScan() {
     if (!currentHash) {
       console.error('No file hash available');
@@ -133,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Navigate to static analysis
-    window.location.href = `/analyze/static/${currentHash}`;
+    window.lbStartRun(`/analyze/static/${encodeURIComponent(currentHash)}`);
   }
 
   // Make it globally accessible

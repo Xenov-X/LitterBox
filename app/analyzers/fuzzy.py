@@ -5,17 +5,73 @@ import json
 import os
 import hashlib
 import configparser
+import threading
 import zlib
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 import binascii
+import re
+
+# One lock for every read-modify-write of the database file, and a cache
+# of the parsed database keyed by path -> (mtime_ns, size, db). The
+# analyzer is constructed per request; without the cache every request
+# (including the stats page) re-parsed the whole corpus.
+_DB_LOCK = threading.RLock()
+_DB_CACHE: Dict[str, Tuple[int, int, Dict]] = {}
+
+# Upper bound on files indexed by one create_db_from_folder call.
+_DEFAULT_MAX_INDEX_FILES = 10000
+
+_SSDEEP_WINDOW = 7
+_RUNS = re.compile(r'(.)\1{3,}')
+
+
+def _ssdeep_parts(hash_value: str):
+    """'bs:h1:h2' -> [(bs, h1), (2*bs, h2)] with runs of >3 identical
+    characters collapsed, as ssdeep does before comparing."""
+    try:
+        bs, h1, h2 = hash_value.split(':', 2)
+        bs = int(bs)
+    except (ValueError, AttributeError):
+        return []
+    return [(bs, _RUNS.sub(r'\1\1\1', h1)), (bs * 2, _RUNS.sub(r'\1\1\1', h2))]
+
+
+def _grams(text: str):
+    return {text[i:i + _SSDEEP_WINDOW] for i in range(len(text) - _SSDEEP_WINDOW + 1)}
+
+
+def _candidate_keys(hash_value: str):
+    """(effective block size, 7-gram) keys for a hash. ssdeep scores two
+    non-identical signatures above 0 only when parts at the same
+    effective block size share a 7-character substring, so blocks that
+    share no key can be skipped without changing any result."""
+    keys = set()
+    for size, part in _ssdeep_parts(hash_value):
+        for gram in _grams(part):
+            keys.add((size, gram))
+    return keys
+
 
 class BlockData:
-    def __init__(self, raw_data: bytes, start_offset: int):
-        self.raw_data = raw_data
+    """A block's bytes. Kept zlib-compressed until displayed — the
+    database holds every 4 KB block of the corpus, and decompressing all
+    of them on load dominated request time and memory."""
+
+    def __init__(self, raw_data: Optional[bytes], start_offset: int,
+                 compressed_b64: Optional[str] = None, length: Optional[int] = None):
+        self._raw = raw_data
+        self._compressed_b64 = compressed_b64
         self.start_offset = start_offset
-        self.length = len(raw_data)
+        self.length = len(raw_data) if raw_data is not None else (length or 0)
+
+    @property
+    def raw_data(self) -> bytes:
+        if self._raw is None:
+            self._raw = zlib.decompress(binascii.a2b_base64(self._compressed_b64))
+            self.length = len(self._raw)
+        return self._raw
 
     def _create_hex_dump(self) -> str:
         """Only created when displaying results"""
@@ -38,18 +94,17 @@ class BlockData:
 
     def to_dict(self) -> Dict[str, Any]:
         """Store absolute minimum in DB, converting bytes to base64 string"""
-        compressed = zlib.compress(self.raw_data)
+        if self._compressed_b64 is None:
+            self._compressed_b64 = binascii.b2a_base64(zlib.compress(self.raw_data)).decode('ascii').strip()
         return {
             "o": self.start_offset,  # Shortened key names
-            "d": binascii.b2a_base64(compressed).decode('ascii').strip()  # Compress and convert to base64
+            "d": self._compressed_b64,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BlockData':
-        """Reconstruct from minimal data"""
-        compressed = binascii.a2b_base64(data["d"])  # Convert base64 back to bytes
-        raw_data = zlib.decompress(compressed)
-        return cls(raw_data, data["o"])
+    def from_dict(cls, data: Dict[str, Any], length: Optional[int] = None) -> 'BlockData':
+        """Reconstruct lazily — bytes are decompressed on first access."""
+        return cls(None, data["o"], compressed_b64=data["d"], length=length)
 
 class BlockMetadata:
     def __init__(self, index: int, block_size: int, hash_value: str, data: BlockData):
@@ -68,7 +123,9 @@ class BlockMetadata:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any], block_size: int) -> 'BlockMetadata':
-        block_data = BlockData.from_dict(data["d"])
+        # Every stored block is block_size bytes except possibly the last;
+        # the exact length is filled in when the bytes are first read.
+        block_data = BlockData.from_dict(data["d"], length=block_size)
         return cls(data["i"], block_size, data["h"], block_data)
 
 class FileMetadata:
@@ -149,6 +206,19 @@ class MatchingRegion:
             
         return results
 
+def _normalize_extensions(extensions) -> List[str]:
+    """["exe", ".DLL", " bin "] -> [".exe", ".dll", ".bin"]"""
+    if isinstance(extensions, str):
+        extensions = extensions.split(',')
+    result = []
+    for ext in extensions or []:
+        ext = str(ext).strip().lower()
+        if not ext:
+            continue
+        result.append(ext if ext.startswith('.') else f'.{ext}')
+    return result
+
+
 class GitRepoInfo:
     def __init__(self, repo_path: str):
         self.repo_path = Path(repo_path)
@@ -181,14 +251,16 @@ class FuzzyHashAnalyzer:
         self.logger = logger
         self.block_size = 4096
         # Get the base path and create full db path
-        fuzzy_base = config['analysis']['doppelganger']['db']['path']
-        fuzzy_dir = config['analysis']['doppelganger']['db']['fuzzyhash']
+        db_config = config['analysis']['doppelganger']['db']
+        fuzzy_base = db_config['path']
+        fuzzy_dir = db_config['fuzzyhash']
         self.db_path = os.path.join(fuzzy_base, fuzzy_dir, 'FuzzyHash.db')
-        self.extensions = [f".{ext}" for ext in config['analysis']['doppelganger']['db'].get('fuzzy_extensions', [])]
+        self.extensions = _normalize_extensions(db_config.get('fuzzy_extensions', []))
+        self.allowed_roots = [os.path.abspath(r) for r in (db_config.get('fuzzy_allowed_roots') or [])]
+        self.max_index_files = int(db_config.get('fuzzy_max_files', _DEFAULT_MAX_INDEX_FILES))
         self.db = self._load_db()
 
-    def _save_db(self):
-        """Save with maximum compression"""
+    def _serialize_db(self) -> bytes:
         data = {
             "sources": {
                 source: {
@@ -201,59 +273,85 @@ class FuzzyHashAnalyzer:
                 for source, source_data in self.db["sources"].items()
             }
         }
-        
-        # Convert to JSON with minimal formatting and compress
         json_str = json.dumps(data, separators=(',', ':'))
-        compressed = zlib.compress(json_str.encode('utf-8'), level=9)
-        
-        with open(self.db_path, 'wb') as f:
-            f.write(compressed)
+        return zlib.compress(json_str.encode('utf-8'), level=9)
+
+    def _write_db_bytes(self, payload: bytes):
+        """Atomic write: a crash or a concurrent reader never sees a
+        truncated database."""
+        os.makedirs(os.path.dirname(self.db_path) or '.', exist_ok=True)
+        tmp_path = f"{self.db_path}.tmp-{os.getpid()}-{threading.get_ident()}"
+        with open(tmp_path, 'wb') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, self.db_path)
+
+    def _save_db(self):
+        """Save with maximum compression"""
+        with _DB_LOCK:
+            self._write_db_bytes(self._serialize_db())
+            st = os.stat(self.db_path)
+            _DB_CACHE[os.path.abspath(self.db_path)] = (st.st_mtime_ns, st.st_size, self.db)
 
     def _load_db(self) -> Dict:
-        """Load compressed database"""
-        empty_db = {"sources": {}}
-        
-        if not os.path.exists(self.db_path):
-            if self.logger:
-                self.logger.debug(f"Database file {self.db_path} not found. Creating new database.")
-            self._save_empty_db()
-            return empty_db
-            
-        try:
-            with open(self.db_path, 'rb') as f:
-                compressed_data = f.read()
-                
-            if not compressed_data:
-                return empty_db
-                
-            # Decompress and parse
-            json_str = zlib.decompress(compressed_data).decode('utf-8')
-            data = json.loads(json_str)
-            
-            # Convert shortened keys back
-            converted = {"sources": {}}
-            for source, sdata in data["sources"].items():
-                converted["sources"][source] = {
-                    "files": {},
-                    "last_updated": sdata["u"]
-                }
-                for path, fdata in sdata["f"].items():
-                    converted["sources"][source]["files"][path] = FileMetadata.from_dict(
-                        fdata, self.block_size
+        """Load the compressed database (cached by mtime/size)."""
+        with _DB_LOCK:
+            if not os.path.exists(self.db_path):
+                if self.logger:
+                    self.logger.debug(f"Database file {self.db_path} not found. Creating new database.")
+                self._save_empty_db()
+                return {"sources": {}}
+
+            st = os.stat(self.db_path)
+            key = os.path.abspath(self.db_path)
+            cached = _DB_CACHE.get(key)
+            if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+                return cached[2]
+
+            try:
+                with open(self.db_path, 'rb') as f:
+                    compressed_data = f.read()
+
+                if not compressed_data:
+                    return {"sources": {}}
+
+                json_str = zlib.decompress(compressed_data).decode('utf-8')
+                data = json.loads(json_str)
+
+                # Convert shortened keys back
+                converted = {"sources": {}}
+                for source, sdata in data["sources"].items():
+                    converted["sources"][source] = {
+                        "files": {},
+                        "last_updated": sdata["u"]
+                    }
+                    for path, fdata in sdata["f"].items():
+                        converted["sources"][source]["files"][path] = FileMetadata.from_dict(
+                            fdata, self.block_size
+                        )
+                _DB_CACHE[key] = (st.st_mtime_ns, st.st_size, converted)
+                return converted
+
+            except Exception as e:
+                # Don't overwrite an unreadable database with an empty one —
+                # move it aside so the indexed corpus can be recovered.
+                corrupt_path = f"{self.db_path}.corrupt-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                if self.logger:
+                    self.logger.error(
+                        f"Error loading fuzzy-hash database ({e}); moved it to {corrupt_path} "
+                        f"and starting an empty one"
                     )
-            return converted
-                
-        except Exception as e:
-            if self.logger:
-                self.logger.error(f"Error loading database: {e}")
-            self._save_empty_db()
-            return empty_db
+                try:
+                    os.replace(self.db_path, corrupt_path)
+                except OSError:
+                    pass
+                self._save_empty_db()
+                return {"sources": {}}
 
     def _save_empty_db(self):
         """Initialize empty compressed database"""
-        empty_data = zlib.compress(json.dumps({"sources": {}}).encode('utf-8'), level=9)
-        with open(self.db_path, 'wb') as f:
-            f.write(empty_data)
+        self._write_db_bytes(zlib.compress(json.dumps({"sources": {}}).encode('utf-8'), level=9))
 
     def _compute_md5(self, file_path: str) -> str:
         """Compute MD5 hash of a file"""
@@ -289,52 +387,84 @@ class FuzzyHashAnalyzer:
         blocks = self._create_blocks(file_path)
         return FileMetadata(file_path, md5, file_size, blocks)
 
-    def _compare_blocks(self, blocks1: List[BlockMetadata], blocks2: List[BlockMetadata]) -> Dict:
-        """Compare blocks and find matching regions"""
+    def _gram_index(self) -> Dict:
+        """{(block size, 7-gram): [(source, rel_path, block)], exact hash:
+        [...]} over the whole database, built once per loaded database."""
+        cached = self.db.get('_index')
+        if cached is not None:
+            return cached
+        by_gram: Dict[Tuple[int, str], List] = {}
+        by_hash: Dict[str, List] = {}
+        for source, source_data in self.db["sources"].items():
+            for rel_path, file_data in source_data["files"].items():
+                for block in file_data.blocks:
+                    ref = (source, rel_path, block)
+                    by_hash.setdefault(block.hash, []).append(ref)
+                    for key in _candidate_keys(block.hash):
+                        by_gram.setdefault(key, []).append(ref)
+        index = {'gram': by_gram, 'hash': by_hash}
+        self.db['_index'] = index
+        return index
+
+    @staticmethod
+    def _build_regions(blocks1: List[BlockMetadata], best: Dict[int, Tuple[float, BlockMetadata]]) -> Dict:
+        """Group per-block best matches into contiguous regions.
+        `overall_similarity` (0-100) is the mean best-match score over the
+        sample's blocks: how much of the sample is found in the target.
+        (It used to divide by min(len) and could exceed 100%.)"""
         matching_regions = []
         current_region = None
         overall_similarity = 0
-        total_comparisons = min(len(blocks1), len(blocks2))
 
-        for b1 in blocks1:
-            best_match = {
-                "block": None,
-                "similarity": 0
-            }
-
-            for b2 in blocks2:
-                similarity = pyssdeep.fuzzy_compare(b1.hash, b2.hash)
-                if similarity > best_match["similarity"]:
-                    best_match["similarity"] = similarity
-                    best_match["block"] = b2
-
-            if best_match["similarity"] > 0:
-                if current_region is None:
-                    current_region = MatchingRegion()
-                
-                b2 = best_match["block"]
-                if (current_region.blocks > 0 and
+        for i, b1 in enumerate(blocks1):
+            if i not in best:
+                continue
+            similarity, b2 = best[i]
+            if (current_region is not None and current_region.blocks > 0 and
                     b1.start_offset == current_region.source_start + current_region.length and
                     b2.start_offset == current_region.target_start + current_region.length):
-                    # Extend current region
-                    current_region.add_block(b1, b2, best_match["similarity"])
-                else:
-                    # Start new region
-                    if current_region.blocks > 0:
-                        matching_regions.append(current_region)
-                    current_region = MatchingRegion()
-                    current_region.add_block(b1, b2, best_match["similarity"])
-                
-                overall_similarity += best_match["similarity"]
+                current_region.add_block(b1, b2, similarity)
+            else:
+                if current_region is not None and current_region.blocks > 0:
+                    matching_regions.append(current_region)
+                current_region = MatchingRegion()
+                current_region.add_block(b1, b2, similarity)
+            overall_similarity += similarity
 
         if current_region and current_region.blocks > 0:
             matching_regions.append(current_region)
 
         return {
-            "overall_similarity": (overall_similarity / total_comparisons) if total_comparisons > 0 else 0,
+            "overall_similarity": (overall_similarity / len(blocks1)) if blocks1 else 0,
             "matching_regions": [region.to_dict() for region in matching_regions],
             "total_regions": len(matching_regions)
         }
+
+    def _match_against_db(self, blocks1: List[BlockMetadata]) -> Dict[Tuple[str, str], Dict]:
+        """Best match per sample block for every database file that shares
+        at least one candidate key. Returns {(source, rel_path): {i: (sim, block)}}."""
+        index = self._gram_index()
+        per_file: Dict[Tuple[str, str], Dict[int, Tuple[float, BlockMetadata]]] = {}
+        for i, b1 in enumerate(blocks1):
+            exact = index['hash'].get(b1.hash, ())
+            for source, rel_path, b2 in exact:
+                per_file.setdefault((source, rel_path), {})[i] = (100, b2)
+
+            seen = set()
+            for key in _candidate_keys(b1.hash):
+                for ref in index['gram'].get(key, ()):
+                    ident = id(ref[2])
+                    if ident in seen:
+                        continue
+                    seen.add(ident)
+                    file_key = (ref[0], ref[1])
+                    current = per_file.get(file_key, {}).get(i)
+                    if current is not None and current[0] >= 100:
+                        continue
+                    similarity = pyssdeep.fuzzy_compare(b1.hash, ref[2].hash)
+                    if similarity > 0 and (current is None or similarity > current[0]):
+                        per_file.setdefault(file_key, {})[i] = (similarity, ref[2])
+        return per_file
 
     def find_git_root(self, path: Path) -> Optional[Tuple[str, Path]]:
         """Find Git repository information"""
@@ -353,61 +483,76 @@ class FuzzyHashAnalyzer:
             current = current.parent
         return "Private Collection", path.parent
 
-    def create_db_from_folder(self, folder_path: str, extensions: List[str] = None) -> Dict:
-        """Create database from folder with specific file extensions"""
-        try:
-            folder = Path(folder_path)
-            if not folder.exists():
-                raise Exception(f"Folder not found: {folder_path}")
+    def _validate_index_folder(self, folder_path: str) -> Path:
+        if not folder_path or not isinstance(folder_path, str):
+            raise ValueError("Folder path is required")
+        folder = Path(os.path.abspath(folder_path))
+        if not folder.is_dir():
+            raise ValueError(f"Folder not found: {folder_path}")
+        if folder.parent == folder:
+            raise ValueError("Refusing to index a filesystem root; choose a specific folder")
+        if self.allowed_roots and not any(
+            os.path.commonpath([str(folder), root]) == root for root in self.allowed_roots
+        ):
+            raise ValueError(
+                "Folder is outside analysis.doppelganger.db.fuzzy_allowed_roots"
+            )
+        return folder
 
-            # Use provided extensions or fall back to configured extensions
-            extensions_to_use = extensions if extensions is not None else self.extensions
-            
+    def create_db_from_folder(self, folder_path: str, extensions: List[str] = None) -> Dict:
+        """Index a folder of reference binaries into the database."""
+        try:
+            folder = self._validate_index_folder(folder_path)
+
+            # Provided extensions ("exe", ".DLL") or the configured ones.
+            extensions_to_use = _normalize_extensions(extensions) if extensions else self.extensions
+
             processed = 0
             skipped = 0
             sources_found = set()
-            
-            for file_path in folder.rglob('*'):
-                if file_path.is_file():
-                    if extensions_to_use and file_path.suffix.lower() not in extensions_to_use:
-                        skipped += 1
-                        continue
-                    
-                    if '.git' in file_path.parts:
-                        skipped += 1
-                        continue
-                    
-                    try:
-                        repo_info = self.find_git_root(file_path)
-                        if not repo_info:
-                            print(f"Warning: No git repository found for {file_path}")
-                            skipped += 1
-                            continue
-                            
-                        source_url, repo_root = repo_info
-                        source = source_url
-                        
-                        if source not in self.db["sources"]:
-                            self.db["sources"][source] = {
-                                "files": {},
-                                "last_updated": datetime.now().isoformat()
-                            }
-                        file_metadata = self.compute_file_metadata(str(file_path))
-                        rel_path = str(file_path.relative_to(folder))
-                        
-                        self.db["sources"][source]["files"][rel_path] = file_metadata
-                        processed += 1
-                        sources_found.add(source)
-                        
-                        if self.logger:
-                            self.logger.debug(f"Processed: {rel_path}")
-                            
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.error(f"Error processing {file_path}: {str(e)}")
-                        skipped += 1
+            new_entries = []
 
-            self._save_db()
+            for file_path in folder.rglob('*'):
+                if not file_path.is_file():
+                    continue
+                if extensions_to_use and file_path.suffix.lower() not in extensions_to_use:
+                    skipped += 1
+                    continue
+                if '.git' in file_path.parts:
+                    skipped += 1
+                    continue
+                if processed >= self.max_index_files:
+                    raise ValueError(
+                        f"More than {self.max_index_files} matching files under {folder}; "
+                        f"choose a narrower folder or raise fuzzy_max_files"
+                    )
+
+                try:
+                    source_url, _repo_root = self.find_git_root(file_path)
+                    file_metadata = self.compute_file_metadata(str(file_path))
+                    rel_path = str(file_path.relative_to(folder))
+                    new_entries.append((source_url, rel_path, file_metadata))
+                    processed += 1
+                    sources_found.add(source_url)
+                    if self.logger:
+                        self.logger.debug(f"Processed: {rel_path}")
+                except Exception as e:
+                    if self.logger:
+                        self.logger.error(f"Error processing {file_path}: {str(e)}")
+                    skipped += 1
+
+            # Merge into the latest on-disk state under the lock so two
+            # concurrent indexing runs don't drop each other's files.
+            with _DB_LOCK:
+                self.db = self._load_db()
+                for source, rel_path, file_metadata in new_entries:
+                    entry = self.db["sources"].setdefault(
+                        source, {"files": {}, "last_updated": datetime.now().isoformat()}
+                    )
+                    entry["files"][rel_path] = file_metadata
+                    entry["last_updated"] = datetime.now().isoformat()
+                self._save_db()
+
             return {
                 "processed": processed,
                 "skipped": skipped,
@@ -440,22 +585,22 @@ class FuzzyHashAnalyzer:
             
             for file_path, current_metadata in batch_metadata:
                 matches = []
-                for source_url, source_data in self.db["sources"].items():
-                    for rel_path, file_data in source_data["files"].items():
-                        comparison = self._compare_blocks(current_metadata.blocks, file_data.blocks)
-                        
-                        if comparison["overall_similarity"] >= threshold:
-                            match = {
-                                "source": source_url,
-                                "file": rel_path,
-                                "overall_similarity": comparison["overall_similarity"],
-                                "md5": file_data.md5,
-                                "matching_regions": comparison["matching_regions"],
-                                "total_regions": comparison["total_regions"],
-                                "target_size": file_data.file_size,
-                                "date_added": file_data.date_added
-                            }
-                            matches.append(match)
+                per_file = self._match_against_db(current_metadata.blocks)
+                for (source_url, rel_path), best in per_file.items():
+                    file_data = self.db["sources"][source_url]["files"][rel_path]
+                    comparison = self._build_regions(current_metadata.blocks, best)
+
+                    if comparison["overall_similarity"] >= threshold:
+                        matches.append({
+                            "source": source_url,
+                            "file": rel_path,
+                            "overall_similarity": comparison["overall_similarity"],
+                            "md5": file_data.md5,
+                            "matching_regions": comparison["matching_regions"],
+                            "total_regions": comparison["total_regions"],
+                            "target_size": file_data.file_size,
+                            "date_added": file_data.date_added
+                        })
 
                 # Sort matches by similarity and take top 3
                 sorted_matches = sorted(matches, key=lambda x: x["overall_similarity"], reverse=True)[:3]

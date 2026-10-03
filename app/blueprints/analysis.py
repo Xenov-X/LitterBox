@@ -21,7 +21,7 @@ def _deps():
     return current_app.extensions['litterbox']
 
 
-@analysis_bp.route('/validate/<pid>', methods=['POST'])
+@analysis_bp.route('/validate/<target:pid>', methods=['POST'])
 @error_handler
 def validate_process(pid):
     app = current_app
@@ -36,7 +36,7 @@ def validate_process(pid):
     return jsonify({'status': 'valid'}), 200
 
 
-@analysis_bp.route('/analyze/<analysis_type>/<target>', methods=['GET', 'POST'])
+@analysis_bp.route('/analyze/<any(static, dynamic):analysis_type>/<target:target>', methods=['GET', 'POST'])
 @error_handler
 def analyze_file(analysis_type, target):
     app = current_app
@@ -48,7 +48,10 @@ def analyze_file(analysis_type, target):
         app.logger.debug(
             f"GET request received for analysis type: {analysis_type}, Target: {target}"
         )
-        return render_template('results.html', analysis_type=analysis_type, file_hash=target)
+        return render_template(
+            'results.html', analysis_type=analysis_type, file_hash=target,
+            is_driver=_is_driver_sample(target),
+        )
 
     app.logger.debug(f"POST request received. Performing {analysis_type} analysis.")
     is_pid = analysis_type == 'dynamic' and target.isdigit()
@@ -56,6 +59,23 @@ def analyze_file(analysis_type, target):
     if is_pid:
         return _perform_pid_analysis(target)
     return _perform_file_analysis(analysis_type, target)
+
+
+def _is_driver_sample(target):
+    """True when the uploaded sample is a kernel driver (.sys): the results
+    page offers HolyGrail instead of dynamic execution."""
+    if target.isdigit():
+        return False
+    result_path = path_manager.find_file_by_hash(target, current_app.config['utils']['result_folder'])
+    if not result_path:
+        return False
+    file_info = json_helpers.load_json_file(os.path.join(result_path, 'file_info.json')) or {}
+    name = str(file_info.get('original_name') or '')
+    return str(file_info.get('extension') or '').lower() == 'sys' or name.lower().endswith('.sys')
+
+
+class _BadArgs(ValueError):
+    pass
 
 
 def _perform_pid_analysis(pid):
@@ -67,10 +87,13 @@ def _perform_pid_analysis(pid):
         app.logger.debug(f"PID validation failed for PID {pid}. Reason: {error_msg}")
         return jsonify({'error': error_msg}), 404
 
+    try:
+        cmd_args = _extract_and_validate_args(request, app.logger)
+    except _BadArgs as e:
+        return jsonify({'error': str(e)}), 400
+
     result_folder = os.path.join(app.config['utils']['result_folder'], f'dynamic_{pid}')
     os.makedirs(result_folder, exist_ok=True)
-
-    cmd_args = _extract_and_validate_args(request, app.logger)
 
     app.logger.debug(f"Performing dynamic analysis on PID: {pid}")
     results = deps.manager.run_dynamic_analysis(pid, True, cmd_args)
@@ -96,6 +119,10 @@ def _perform_file_analysis(analysis_type, target):
     if not file_path:
         app.logger.debug(f"File with hash {target} not found in upload folder.")
         return jsonify({'error': 'File not found'}), 404
+    if not result_path:
+        # Check before a minutes-long run, not when saving its results.
+        app.logger.warning(f"Result folder not found for hash: {target}")
+        return jsonify({'error': 'Result folder not found; re-upload the sample'}), 404
 
     app.logger.debug(f"File found at: {file_path}, Results will be saved to: {result_path}")
 
@@ -104,7 +131,10 @@ def _perform_file_analysis(analysis_type, target):
         results = deps.manager.run_static_analysis(file_path)
         results_file = 'static_analysis_results.json'
     else:
-        cmd_args = _extract_and_validate_args(request, app.logger)
+        try:
+            cmd_args = _extract_and_validate_args(request, app.logger)
+        except _BadArgs as e:
+            return jsonify({'error': str(e)}), 400
         app.logger.debug(f"Performing dynamic analysis on target: {file_path}, is_pid: False")
         results = deps.manager.run_dynamic_analysis(file_path, False, cmd_args)
         results_file = 'dynamic_analysis_results.json'
@@ -113,27 +143,32 @@ def _perform_file_analysis(analysis_type, target):
 
 
 def _extract_and_validate_args(req, logger):
-    try:
-        request_data = req.get_json() or {}
-        cmd_args = request_data.get('args', [])
+    """Payload arguments from the JSON body: {"args": ["a", "b"]}.
 
-        if not isinstance(cmd_args, list):
-            logger.error("Invalid arguments format provided")
-            return []
-
-        for arg in cmd_args:
-            if not isinstance(arg, str):
-                logger.error("Non-string argument provided")
-                return []
-            if any(char in arg for char in ';&|'):
-                logger.error("Potentially dangerous argument detected")
-                return []
-
-        logger.debug(f"Command line arguments received: {cmd_args}")
-        return cmd_args
-    except Exception as e:
-        logger.error(f"Error parsing request data: {e}")
+    Raises _BadArgs (-> HTTP 400) for a malformed body instead of
+    silently running the payload without its arguments. Arguments are
+    passed as an argv list (no shell), so `;`, `&` and `|` are ordinary
+    characters — the old filter dropped every argument when one
+    contained them (e.g. a URL with a query string).
+    """
+    if not req.get_data(cache=True):
         return []
+    if not req.is_json:
+        raise _BadArgs('Request body must be JSON: {"args": [...]}')
+    request_data = req.get_json(silent=True)
+    if request_data is None:
+        raise _BadArgs('Request body is not valid JSON')
+    if not isinstance(request_data, dict):
+        raise _BadArgs('Request body must be a JSON object')
+
+    cmd_args = request_data.get('args', [])
+    if cmd_args is None:
+        return []
+    if not isinstance(cmd_args, list) or not all(isinstance(a, str) for a in cmd_args):
+        raise _BadArgs('"args" must be a list of strings')
+
+    logger.debug(f"Command line arguments received: {cmd_args}")
+    return cmd_args
 
 
 def _handle_analysis_results(results, result_path, results_filename):
@@ -142,15 +177,21 @@ def _handle_analysis_results(results, result_path, results_filename):
 
     deps.helpers.save_analysis_results(results, result_path, results_filename)
 
+    # `error` is a dict from the manager's error envelopes but a plain
+    # string from _run_analyzers ("Process does not exist ...").
+    error = results.get('error')
+    if not isinstance(error, dict):
+        error = {'message': str(error)} if error else {}
+
     if results.get('status') == 'early_termination':
         app.logger.error("Process terminated early during initialization")
         return jsonify({
             'status': 'early_termination',
-            'error': results.get('error', {}).get('message', 'Process terminated early'),
+            'error': error.get('message', 'Process terminated early'),
             'details': {
-                'termination_time': results.get('error', {}).get('termination_time'),
-                'init_time': results.get('error', {}).get('init_time'),
-                'message': results.get('error', {}).get('details'),
+                'termination_time': error.get('termination_time'),
+                'init_time': error.get('init_time'),
+                'message': error.get('details'),
             },
         }), 202
 
@@ -158,15 +199,15 @@ def _handle_analysis_results(results, result_path, results_filename):
         app.logger.debug("Analysis completed with errors.")
         return jsonify({
             'status': 'error',
-            'error': results.get('error', {}).get('message', 'Analysis failed'),
-            'details': results.get('error', {}).get('details'),
+            'error': error.get('message', 'Analysis failed'),
+            'details': error.get('details'),
         }), 500
 
     app.logger.debug("Analysis completed successfully.")
     return jsonify({'status': 'success', 'results': results})
 
 
-@analysis_bp.route('/analyze/all/<target>', methods=['GET'])
+@analysis_bp.route('/analyze/all/<target:target>', methods=['GET'])
 def analyze_all_page(target):
     """Coordinator page for the "All" pipeline. The page itself is a
     progress shell — orchestration happens in JS, hitting the existing
@@ -203,7 +244,7 @@ def whiskers_page():
     )
 
 
-@analysis_bp.route('/analyze/edr/<profile>/<target>', methods=['GET', 'POST'])
+@analysis_bp.route('/analyze/edr/<profile:profile>/<target:target>', methods=['GET', 'POST'])
 @error_handler
 def analyze_edr(profile, target):
     """Dispatch a payload to a registered EDR profile.
@@ -260,11 +301,14 @@ def analyze_edr(profile, target):
                 ),
             }), 403
 
-    # Pull cmd args from the POST body (validated/sanitized like the
-    # dynamic-analysis route does) and join into the single string
-    # AgentClient.exec expects. For DLL targets the first token is the
-    # exported entry point — Whiskers wraps with rundll32 server-side.
-    cmd_args = _extract_and_validate_args(request, app.logger)
+    # Pull cmd args from the POST body (validated like the dynamic-analysis
+    # route) and join into the single string AgentClient.exec expects. For
+    # DLL targets the first token is the exported entry point — Whiskers
+    # wraps with rundll32 server-side.
+    try:
+        cmd_args = _extract_and_validate_args(request, app.logger)
+    except _BadArgs as e:
+        return jsonify({'error': str(e)}), 400
     executable_args = ' '.join(cmd_args) if cmd_args else None
 
     app.logger.debug(

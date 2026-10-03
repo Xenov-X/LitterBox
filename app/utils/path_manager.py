@@ -16,7 +16,10 @@ common create / delete paths.
 """
 
 import os
+import re
 import threading
+
+_MD5_RE = re.compile(r'^[0-9a-fA-F]{32}$')
 
 # Per-folder cache. Each entry: {folder_path: (mtime_ns, {hash_or_prefix: dirname})}
 # Threading note: Flask is multi-threaded by default; readers and writers
@@ -84,10 +87,12 @@ def _refresh(cache_key: str, search_folder: str, mtime, force: bool = False):
         try:
             for entry in os.listdir(search_folder):
                 # Index by full name (covers exact-match callers) AND by
-                # hash prefix (covers `<md5>_<original_name>` style).
+                # MD5 prefix (covers `<md5>_<original_name>` style). Only
+                # real MD5 prefixes: `dynamic_<pid>` must not be reachable
+                # as "dynamic".
                 index[entry] = entry
                 prefix, _, _rest = entry.partition('_')
-                if prefix and prefix not in index:
+                if _MD5_RE.match(prefix) and prefix not in index:
                     index[prefix] = entry
         except FileNotFoundError:
             pass

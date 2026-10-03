@@ -89,7 +89,10 @@ class ElasticBackend(EdrBackend):
 
     @classmethod
     def validate_profile(cls, data: dict) -> None:
-        if data.get("elastic_apikey", "").startswith("REPLACE_ME"):
+        apikey = data.get("elastic_apikey")
+        if not isinstance(apikey, str):
+            raise EdrProfileError("elastic_apikey must be a string (quote it in YAML)")
+        if apikey.startswith("REPLACE_ME"):
             raise EdrProfileError(
                 "elastic_apikey is still the example placeholder — fill it in"
             )

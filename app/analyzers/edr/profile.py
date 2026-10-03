@@ -5,7 +5,7 @@ agent (on the EDR VM) to a backend (e.g. an Elastic stack) for alert
 queries. The loader scans the directory at boot and returns a list of
 validated profiles to register with the analyzer manager.
 
-Real profile files are gitignored — the repo only ships ``*.example.yml``.
+Real profile files are gitignored — the repo only ships ``*.yml.example``.
 
 Field validation is dynamic: each registered backend declares its required
 and optional profile fields, plus a ``validate_profile()`` classmethod for
@@ -16,8 +16,10 @@ before ``load_profiles()``, so backends are available at validation time.
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import yaml
 
@@ -51,17 +53,61 @@ def _get_backend_cls(kind: str):
 
 
 
+# Profile names appear in URLs and in result filenames
+# (edr_<name>_results.json), so keep them to a safe character set.
+_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
+
+
+def _positive_int(data: dict, key: str, default: int, *, allow_zero: bool = False) -> int:
+    value = data.get(key, default)
+    if value is None:
+        value = default
+    if isinstance(value, bool):
+        raise EdrProfileError(f"{key} must be an integer number of seconds, got {value!r}")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise EdrProfileError(f"{key} must be an integer number of seconds, got {value!r}") from None
+    if number < 0 or (number == 0 and not allow_zero):
+        raise EdrProfileError(f"{key} must be {'>= 0' if allow_zero else '> 0'}, got {number}")
+    return number
+
+
+def _optional_str(data: dict, key: str) -> Optional[str]:
+    value = data.get(key)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise EdrProfileError(f"{key} must be a string, got {type(value).__name__}")
+    return value
+
+
+def _http_url(value: str, key: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise EdrProfileError(f"{key} must be an http(s) URL, got {value!r}")
+    return value.rstrip("/")
+
+
 @dataclass
 class EdrProfile:
     name: str
     display_name: str
     agent_url: str
-    live_edr: bool = False
+    # Fail closed: a profile that doesn't say otherwise may reach live
+    # vendor infrastructure, so samples need explicit live-EDR consent.
+    live_edr: bool = True
     kind: str = "elastic"
 
     elastic_url: Optional[str] = None
     elastic_apikey: Optional[str] = None
     elastic_verify_tls: bool = False
+    # Path to a CA bundle for the Elastic endpoint (implies TLS verification).
+    elastic_ca_cert: Optional[str] = None
+    # Comma-separated index patterns to query for alerts (optional override).
+    elastic_index_pattern: Optional[str] = None
+    # Shared secret sent to Whiskers as `Authorization: Bearer <token>`.
+    agent_token: Optional[str] = None
 
     wait_seconds_for_alerts: int = 90
     av_block_wait_seconds: int = 60
@@ -76,7 +122,10 @@ class EdrProfile:
                 f"profile must be a YAML mapping, got {type(data).__name__}"
             )
 
-        kind = (data.get("kind") or "elastic").strip().lower()
+        raw_kind = data.get("kind") or "elastic"
+        if not isinstance(raw_kind, str):
+            raise EdrProfileError(f"kind must be a string, got {raw_kind!r}")
+        kind = raw_kind.strip().lower()
 
         backend_cls = _get_backend_cls(kind)
 
@@ -93,22 +142,58 @@ class EdrProfile:
         if missing:
             raise EdrProfileError(f"missing required field(s): {', '.join(missing)}")
 
+        name = data["name"]
+        if not isinstance(name, str) or not _NAME_RE.match(name):
+            raise EdrProfileError(
+                f"name must be 1-64 chars of letters, digits, '_', '.', '-', got {name!r}"
+            )
+        display_name = data["display_name"]
+        if not isinstance(display_name, str):
+            raise EdrProfileError("display_name must be a string")
+        agent_url = data["agent_url"]
+        if not isinstance(agent_url, str):
+            raise EdrProfileError("agent_url must be a string")
+
+        # live_edr gates TTP exposure to vendor clouds. A missing key is
+        # treated as live (fail closed); anything but a real boolean is an
+        # error rather than silently truthy/falsy.
+        if "live_edr" not in data:
+            logger.warning(
+                "EDR profile %r has no live_edr key; treating it as live_edr: true "
+                "(samples need 'Allow live EDR'). Set live_edr explicitly to silence this.",
+                name,
+            )
+            live_edr = True
+        elif isinstance(data["live_edr"], bool):
+            live_edr = data["live_edr"]
+        else:
+            raise EdrProfileError(f"live_edr must be true or false, got {data['live_edr']!r}")
+
+        verify_tls = data.get("elastic_verify_tls", False)
+        if not isinstance(verify_tls, bool):
+            raise EdrProfileError(f"elastic_verify_tls must be true or false, got {verify_tls!r}")
+
         if backend_cls is not None:
             backend_cls.validate_profile(data)
 
+        elastic_url = _optional_str(data, "elastic_url")
+
         return cls(
-            name=data["name"],
-            display_name=data["display_name"],
-            agent_url=data["agent_url"].rstrip("/"),
-            live_edr=bool(data.get("live_edr", False)),
+            name=name,
+            display_name=display_name,
+            agent_url=_http_url(agent_url, "agent_url"),
+            live_edr=live_edr,
             kind=kind,
-            elastic_url=(data.get("elastic_url") or "").rstrip("/") or None,
-            elastic_apikey=data.get("elastic_apikey"),
-            elastic_verify_tls=bool(data.get("elastic_verify_tls", False)),
-            wait_seconds_for_alerts=int(data.get("wait_seconds_for_alerts", 90)),
-            av_block_wait_seconds=int(data.get("av_block_wait_seconds", 60)),
-            exec_timeout_seconds=int(data.get("exec_timeout_seconds", 60)),
-            drop_path=data.get("drop_path"),
+            elastic_url=_http_url(elastic_url, "elastic_url") if elastic_url else None,
+            elastic_apikey=_optional_str(data, "elastic_apikey"),
+            elastic_verify_tls=verify_tls,
+            elastic_ca_cert=_optional_str(data, "elastic_ca_cert"),
+            elastic_index_pattern=_optional_str(data, "elastic_index_pattern"),
+            agent_token=_optional_str(data, "agent_token"),
+            wait_seconds_for_alerts=_positive_int(data, "wait_seconds_for_alerts", 90, allow_zero=True),
+            av_block_wait_seconds=_positive_int(data, "av_block_wait_seconds", 60, allow_zero=True),
+            exec_timeout_seconds=_positive_int(data, "exec_timeout_seconds", 60),
+            drop_path=_optional_str(data, "drop_path"),
             source_path=source_path,
         )
 
@@ -133,7 +218,7 @@ def load_profiles(profiles_dir: str = PROFILES_DIR) -> List[EdrProfile]:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             profile = EdrProfile.from_dict(data, source_path=path)
-        except (EdrProfileError, yaml.YAMLError, OSError) as exc:
+        except (EdrProfileError, yaml.YAMLError, OSError, ValueError, TypeError, AttributeError) as exc:
             logger.error("skipping EDR profile %s: %s", path, exc)
             continue
 

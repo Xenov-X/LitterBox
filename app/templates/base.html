@@ -18,6 +18,36 @@
     <link rel="icon" type="image/x-icon" href="{{ favicon_url }}"/>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.min.css') }}"/>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+    <script>
+    // Analysis pages (/analyze/...) execute the sample when they load. They
+    // only do so when the UI started the run in this tab: lbStartRun()
+    // leaves a one-time token, and the page consumes it with lbConsumeRun().
+    // A reload, Back/Forward, restored tab or cross-site navigation has no
+    // token and shows a "Run analysis" button instead of re-executing.
+    (function () {
+        var KEY = 'lb.pendingRun';
+        window.lbStartRun = function (url) {
+            try { sessionStorage.setItem(KEY, new URL(url, location.href).pathname); } catch (e) {}
+            location.href = url;
+        };
+        window.lbConsumeRun = function () {
+            var pending = null;
+            try { pending = sessionStorage.getItem(KEY); sessionStorage.removeItem(KEY); } catch (e) {}
+            return pending === location.pathname;
+        };
+        // Buttons carry their target in data-href (data-start-run marks the
+        // ones that start an analysis) instead of interpolating values into
+        // inline JS.
+        document.addEventListener('click', function (e) {
+            var el = e.target.closest && e.target.closest('[data-href]');
+            if (!el || el.disabled) return;
+            e.preventDefault();
+            var url = el.getAttribute('data-href');
+            if (el.hasAttribute('data-start-run')) window.lbStartRun(url);
+            else location.href = url;
+        });
+    })();
+    </script>
     {% block head %}{% endblock %}
 </head>
 <body>

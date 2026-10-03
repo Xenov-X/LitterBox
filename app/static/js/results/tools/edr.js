@@ -25,6 +25,12 @@
 //     "Correlating alerts…" while polling.
 
 import { errorPanel, cleanState, threatState, statRow, panel, kvGrid, codeBlock, tag, escapeHtml } from './_shared.js';
+
+/** Alert/rule references come from the EDR backend; only http(s) links
+ *  are rendered clickable (no javascript:/data: URLs). */
+function safeHref(url) {
+    return typeof url === 'string' && /^https?:\/\//i.test(url.trim()) ? escapeHtml(url.trim()) : '#';
+}
 import summaryTool from './summary.js';
 
 const HIGH_SEVERITY = new Set(['high', 'critical']);
@@ -406,7 +412,7 @@ function renderAlertDetail(a) {
         const refList = refs.length
             ? `<div style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
                  <span class="lb-muted">References:</span>
-                 ${refs.map(r => `<a href="${escapeHtml(r)}" target="_blank" rel="noopener" class="lb-mono" style="word-break: break-all;">${escapeHtml(r)}</a>`).join('')}
+                 ${refs.map(r => `<a href="${safeHref(r)}" target="_blank" rel="noopener noreferrer" class="lb-mono" style="word-break: break-all;">${escapeHtml(r)}</a>`).join('')}
                </div>`
             : '';
         sections.push(`
@@ -425,10 +431,10 @@ function renderAlertDetail(a) {
             const subText = m.subtechnique_name ? `${m.subtechnique_id || ''} ${m.subtechnique_name}`.trim() : null;
             return `
                 <div class="lb-edr-mitre-row">
-                    <a class="lb-edr-chip lb-edr-chip--tactic" href="${escapeHtml(m.tactic_reference || '#')}" target="_blank" rel="noopener">${escapeHtml(tacticText)}</a>
+                    <a class="lb-edr-chip lb-edr-chip--tactic" href="${safeHref(m.tactic_reference)}" target="_blank" rel="noopener noreferrer">${escapeHtml(tacticText)}</a>
                     <span class="lb-muted">›</span>
-                    <a class="lb-edr-chip lb-edr-chip--tech" href="${escapeHtml(m.technique_reference || '#')}" target="_blank" rel="noopener">${escapeHtml(techText)}</a>
-                    ${subText ? `<span class="lb-muted">›</span><a class="lb-edr-chip lb-edr-chip--sub" href="${escapeHtml(m.subtechnique_reference || '#')}" target="_blank" rel="noopener">${escapeHtml(subText)}</a>` : ''}
+                    <a class="lb-edr-chip lb-edr-chip--tech" href="${safeHref(m.technique_reference)}" target="_blank" rel="noopener noreferrer">${escapeHtml(techText)}</a>
+                    ${subText ? `<span class="lb-muted">›</span><a class="lb-edr-chip lb-edr-chip--sub" href="${safeHref(m.subtechnique_reference)}" target="_blank" rel="noopener noreferrer">${escapeHtml(subText)}</a>` : ''}
                 </div>`;
         }).join('');
         sections.push(`<div class="lb-edr-section"><span class="lb-eyebrow">MITRE ATT&CK</span>${chips}</div>`);

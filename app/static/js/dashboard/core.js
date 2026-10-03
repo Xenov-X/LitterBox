@@ -4,6 +4,8 @@
 // inventory + live EDR agent reachability in one shot. Auto-refreshes
 // every 60s; the manual Refresh button forces an immediate poll.
 
+import { escapeHtml } from '../utils/escape.js';
+
 const REFRESH_MS = 60000;
 let _refreshTimer = null;
 let _inFlight = false;
@@ -144,12 +146,6 @@ async function refreshDashboard() {
 function capitalize(s) {
     const str = String(s ?? '');
     return str ? str[0].toUpperCase() + str.slice(1) : '';
-}
-
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => (
-        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-    ));
 }
 
 window.refreshDashboard = refreshDashboard;

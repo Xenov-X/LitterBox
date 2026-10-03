@@ -293,7 +293,7 @@ const ProcessManager = {
 
             ModalManager.hideProcessWarning();
             NotificationSystem.show(`Starting analysis of process ${pid}…`, 'success');
-            window.location.href = `/analyze/dynamic/${pid}`;
+            window.lbStartRun(`/analyze/dynamic/${encodeURIComponent(pid)}`);
         } catch (error) {
             console.error('Process analysis error:', error);
             NotificationSystem.show(error.message, 'error');

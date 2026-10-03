@@ -1,6 +1,10 @@
 // app/static/js/upload/lnk.js
 // Pure renderers for the LNK preview block in the upload page.
 // Called by core.js when the uploaded file is detected as a Windows shortcut.
+// Every LNK field is attacker-controlled (the shortcut's author chose it),
+// so all of them are escaped before going into innerHTML.
+
+import { escapeHtml as esc } from '../utils/escape.js';
 
 export function createLnkInfoSection() {
     // Create LNK info section if it doesn't exist
@@ -47,12 +51,12 @@ export function renderLnkInfo(lnkInfo) {
                     <span class="text-base font-medium text-gray-200">Target Command</span>
                 </div>
                 <div class="font-mono text-sm ${getTargetCommandTextClass(riskLevel)} bg-gray-900/50 rounded p-3 break-all">
-                    ${targetInfo.target_command || 'No target command found'}
+                    ${esc(targetInfo.target_command || 'No target command found')}
                 </div>
                 ${targetInfo.command_line_arguments ? `
                     <div class="mt-2">
                         <span class="text-sm text-gray-400">Arguments: </span>
-                        <span class="font-mono text-sm text-gray-300">${targetInfo.command_line_arguments}</span>
+                        <span class="font-mono text-sm text-gray-300">${esc(targetInfo.command_line_arguments)}</span>
                     </div>
                 ` : ''}
             </div>
@@ -63,13 +67,13 @@ export function renderLnkInfo(lnkInfo) {
                     <div class="bg-gray-800/30 rounded-lg p-3">
                         <div class="text-sm text-gray-400 mb-1">Working Directory</div>
                         <div class="text-sm font-mono text-gray-300 break-all">
-                            ${targetInfo.working_directory || 'Not specified'}
+                            ${esc(targetInfo.working_directory || 'Not specified')}
                         </div>
                     </div>
                     <div class="bg-gray-800/30 rounded-lg p-3">
                         <div class="text-sm text-gray-400 mb-1">Relative Path</div>
                         <div class="text-sm font-mono text-gray-300 break-all">
-                            ${targetInfo.relative_path || 'Not specified'}
+                            ${esc(targetInfo.relative_path || 'Not specified')}
                         </div>
                     </div>
                 </div>
@@ -77,13 +81,13 @@ export function renderLnkInfo(lnkInfo) {
                     <div class="bg-gray-800/30 rounded-lg p-3">
                         <div class="text-sm text-gray-400 mb-1">Icon Location</div>
                         <div class="text-sm font-mono text-gray-300 break-all">
-                            ${targetInfo.icon_location || 'Default'}
+                            ${esc(targetInfo.icon_location || 'Default')}
                         </div>
                     </div>
                     <div class="bg-gray-800/30 rounded-lg p-3">
                         <div class="text-sm text-gray-400 mb-1">Window Style</div>
                         <div class="text-sm text-gray-300">
-                            ${lnkHeader.window_style || 'Unknown'}
+                            ${esc(lnkHeader.window_style || 'Unknown')}
                         </div>
                     </div>
                 </div>
@@ -102,20 +106,20 @@ export function renderLnkInfo(lnkInfo) {
                         <div>
                             <div class="text-sm text-gray-400 mb-1">Machine Identifier</div>
                             <div class="text-sm font-mono text-blue-400 bg-blue-500/10 rounded px-2 py-1">
-                                ${machineTracking.machine_identifier}
+                                ${esc(machineTracking.machine_identifier)}
                             </div>
                         </div>
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <div class="text-sm text-gray-400 mb-1">DROID Volume ID</div>
                                 <div class="text-xs font-mono text-gray-300 bg-gray-900/50 rounded px-2 py-1 break-all">
-                                    ${machineTracking.droid_volume_identifier || 'N/A'}
+                                    ${esc(machineTracking.droid_volume_identifier || 'N/A')}
                                 </div>
                             </div>
                             <div>
                                 <div class="text-sm text-gray-400 mb-1">DROID File ID</div>
                                 <div class="text-xs font-mono text-gray-300 bg-gray-900/50 rounded px-2 py-1 break-all">
-                                    ${machineTracking.droid_file_identifier || 'N/A'}
+                                    ${esc(machineTracking.droid_file_identifier || 'N/A')}
                                 </div>
                             </div>
                         </div>
@@ -135,19 +139,19 @@ export function renderLnkInfo(lnkInfo) {
                     <div>
                         <div class="text-sm text-gray-400 mb-1">Created</div>
                         <div class="text-sm text-gray-300">
-                            ${lnkHeader.creation_time || 'Unknown'}
+                            ${esc(lnkHeader.creation_time || 'Unknown')}
                         </div>
                     </div>
                     <div>
                         <div class="text-sm text-gray-400 mb-1">Modified</div>
                         <div class="text-sm text-gray-300">
-                            ${lnkHeader.modified_time || 'Unknown'}
+                            ${esc(lnkHeader.modified_time || 'Unknown')}
                         </div>
                     </div>
                     <div>
                         <div class="text-sm text-gray-400 mb-1">Accessed</div>
                         <div class="text-sm text-gray-300">
-                            ${lnkHeader.accessed_time || 'Unknown'}
+                            ${esc(lnkHeader.accessed_time || 'Unknown')}
                         </div>
                     </div>
                 </div>
@@ -165,15 +169,15 @@ export function renderLnkInfo(lnkInfo) {
                     <div class="grid grid-cols-3 gap-4">
                         <div>
                             <div class="text-sm text-gray-400 mb-1">Drive Type</div>
-                            <div class="text-sm text-gray-300">${volumeInfo.drive_type}</div>
+                            <div class="text-sm text-gray-300">${esc(volumeInfo.drive_type)}</div>
                         </div>
                         <div>
                             <div class="text-sm text-gray-400 mb-1">Drive Serial</div>
-                            <div class="text-sm font-mono text-gray-300">${volumeInfo.drive_serial || 'Unknown'}</div>
+                            <div class="text-sm font-mono text-gray-300">${esc(volumeInfo.drive_serial || 'Unknown')}</div>
                         </div>
                         <div>
                             <div class="text-sm text-gray-400 mb-1">Local Base Path</div>
-                            <div class="text-sm font-mono text-gray-300 break-all">${volumeInfo.local_base_path || 'N/A'}</div>
+                            <div class="text-sm font-mono text-gray-300 break-all">${esc(volumeInfo.local_base_path || 'N/A')}</div>
                         </div>
                     </div>
                 </div>
@@ -183,22 +187,22 @@ export function renderLnkInfo(lnkInfo) {
             <div class="grid grid-cols-2 gap-4">
                 <div class="bg-gray-800/30 rounded-lg p-4">
                     <div class="text-sm font-medium text-gray-200 mb-3">Link Flags</div>
-                    <div class="text-xs text-gray-400 mb-2">Raw Value: ${linkFlags.raw_value || 'N/A'}</div>
+                    <div class="text-xs text-gray-400 mb-2">Raw Value: ${esc(linkFlags.raw_value || 'N/A')}</div>
                     <div class="space-y-1">
                         ${(linkFlags.enabled_flags || []).map(flag => `
                             <div class="text-xs text-gray-300 bg-blue-500/10 rounded px-2 py-1 inline-block mr-1 mb-1">
-                                ${flag}
+                                ${esc(flag)}
                             </div>
                         `).join('')}
                     </div>
                 </div>
                 <div class="bg-gray-800/30 rounded-lg p-4">
                     <div class="text-sm font-medium text-gray-200 mb-3">File Attributes</div>
-                    <div class="text-xs text-gray-400 mb-2">Raw Value: ${fileAttributes.raw_value || 'N/A'}</div>
+                    <div class="text-xs text-gray-400 mb-2">Raw Value: ${esc(fileAttributes.raw_value || 'N/A')}</div>
                     <div class="space-y-1">
                         ${(fileAttributes.enabled_attributes || []).map(attr => `
                             <div class="text-xs text-gray-300 bg-green-500/10 rounded px-2 py-1 inline-block mr-1 mb-1">
-                                ${attr.replace('FILE_ATTRIBUTE_', '')}
+                                ${esc(String(attr).replace('FILE_ATTRIBUTE_', ''))}
                             </div>
                         `).join('')}
                     </div>

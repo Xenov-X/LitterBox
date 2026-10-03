@@ -1,6 +1,7 @@
 # app/blueprints/doppelganger.py
 """Blender + fuzzy-hash similarity analysis."""
 import os
+import re
 from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, render_template, request
@@ -8,6 +9,9 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from ..analyzers.blender import BlenderAnalyzer
 from ..analyzers.fuzzy import FuzzyHashAnalyzer
 from ..services.error_handling import error_handler
+from ..utils import path_manager
+
+_MD5_RE = re.compile(r'^[0-9a-fA-F]{32}$')
 
 doppelganger_bp = Blueprint('doppelganger', __name__)
 
@@ -18,13 +22,16 @@ def doppelganger():
     app = current_app
     app.logger.debug("Accessed doppelganger endpoint")
 
+    data = None
     if request.method == 'GET':
         analysis_type = request.args.get('type', 'blender')
     else:
-        if request.is_json:
-            analysis_type = request.json.get('type', 'blender')
-        else:
-            analysis_type = request.form.get('type', 'blender')
+        if not request.is_json:
+            return jsonify({'error': 'Content-Type must be application/json'}), 415
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'error': 'Request body must be a JSON object'}), 400
+        analysis_type = data.get('type', 'blender')
 
     if analysis_type not in ['blender', 'fuzzy']:
         analysis_type = 'blender'
@@ -37,16 +44,17 @@ def doppelganger():
     if request.method == 'GET':
         payload_hash = request.args.get('hash')
         if payload_hash:
-            return _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash)
+            if not _MD5_RE.match(payload_hash):
+                return jsonify({'error': 'hash must be an MD5'}), 400
+            threshold, error = _parse_threshold(request.args.get('threshold', 1))
+            if error:
+                return jsonify({'error': error}), 400
+            return _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash, threshold)
 
         if analysis_type == 'blender':
             return _handle_blender_initial_load()
         return _handle_fuzzy_initial_load(analyzer)
 
-    if not request.is_json:
-        return jsonify({'error': 'Content-Type must be application/json'}), 415
-
-    data = request.json
     operation = data.get('operation')
 
     if not operation:
@@ -60,7 +68,18 @@ def doppelganger():
     return _handle_fuzzy_operations(analyzer, operation, data)
 
 
-def _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash):
+def _parse_threshold(value):
+    """Similarity threshold 0-100 from a query/JSON value -> (int, error)."""
+    try:
+        threshold = int(value)
+    except (TypeError, ValueError):
+        return None, 'threshold must be an integer 0-100'
+    if not 0 <= threshold <= 100:
+        return None, 'threshold must be an integer 0-100'
+    return threshold, None
+
+
+def _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash, threshold=1):
     if analysis_type == 'blender':
         comparison_result = analyzer.compare_payload(payload_hash)
 
@@ -73,11 +92,11 @@ def _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash):
             'result': comparison_result,
         })
 
-    file_path = _find_file_by_hash_for_fuzzy(analyzer, payload_hash)
+    file_path = _find_file_by_hash_for_fuzzy(payload_hash)
     if not file_path:
         return jsonify({'error': 'File not found'}), 404
 
-    results = analyzer.analyze_files([file_path], threshold=1)
+    results = analyzer.analyze_files([file_path], threshold=threshold)
     return jsonify({
         'status': 'success',
         'message': 'Analysis completed successfully',
@@ -85,28 +104,13 @@ def _handle_doppelganger_hash_request(analyzer, analysis_type, payload_hash):
     })
 
 
-def _find_file_by_hash_for_fuzzy(analyzer, payload_hash):
-    app = current_app
-    upload_folder = os.path.abspath(app.config['utils']['upload_folder'])
-
-    if hasattr(app, 'file_cache'):
-        file_path = app.file_cache.get_file_by_hash(payload_hash)
-        if file_path:
-            return file_path
-
-    try:
-        for filename in os.listdir(upload_folder):
-            full_path = os.path.join(upload_folder, filename)
-            if os.path.isfile(full_path):
-                file_hash = analyzer._compute_md5(full_path)
-                if file_hash == payload_hash:
-                    if hasattr(app, 'file_cache'):
-                        app.file_cache.add_file(full_path, file_hash)
-                    return full_path
-    except FileNotFoundError:
-        app.logger.error(f"Upload folder not found: {upload_folder}")
-
-    return None
+def _find_file_by_hash_for_fuzzy(payload_hash):
+    """Uploads are stored as `<md5>_<name>`, so the shared hash index
+    finds them without hashing every upload on each request."""
+    if not isinstance(payload_hash, str) or not _MD5_RE.match(payload_hash):
+        return None
+    path = path_manager.find_file_by_hash(payload_hash, current_app.config['utils']['upload_folder'])
+    return path if path and os.path.isfile(path) else None
 
 
 def _handle_blender_initial_load():
@@ -162,9 +166,10 @@ def _handle_fuzzy_operations(analyzer, operation, data):
 
         folder_path = data['folder_path']
         extensions = data.get('extensions', None)
-
-        if extensions and isinstance(extensions, str):
-            extensions = [ext.strip() for ext in extensions.split(',')]
+        try:
+            analyzer._validate_index_folder(folder_path)
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
 
         stats = analyzer.create_db_from_folder(folder_path, extensions)
         return jsonify({
@@ -178,12 +183,14 @@ def _handle_fuzzy_operations(analyzer, operation, data):
             return jsonify({'error': 'File hash is required'}), 400
 
         file_hash = data['hash']
-        file_path = _find_file_by_hash_for_fuzzy(analyzer, file_hash)
+        file_path = _find_file_by_hash_for_fuzzy(file_hash)
 
         if not file_path:
             return jsonify({'error': 'File not found'}), 404
 
-        threshold = data.get('threshold', 1)
+        threshold, error = _parse_threshold(data.get('threshold', 1))
+        if error:
+            return jsonify({'error': error}), 400
         results = analyzer.analyze_files([file_path], threshold)
 
         return jsonify({
