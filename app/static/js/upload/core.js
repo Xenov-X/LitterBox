@@ -289,23 +289,15 @@ document.addEventListener('DOMContentLoaded', function() {
             setArgsHint(allArgs, allArgs.nextElementSibling, lc, ext);
         }
 
-        // Gate live-EDR profiles: when the toggle is off, disable their tabs
-        // and CTA buttons so operators can't accidentally dispatch.
         const allowLive = !!(document.getElementById('allowLiveEdr') || {}).checked;
-        if (liveEdrProfiles.size) {
-            document.querySelectorAll('#modeTabs .lb-tab').forEach(t => {
-                const mode = t.dataset.mode || '';
-                if (!mode.startsWith('edr:')) return;
-                const profile = mode.slice(4);
-                if (!liveEdrProfiles.has(profile)) return;
-                t.classList.toggle('lb-tab--locked', !allowLive);
-                t.title = allowLive ? '' : 'Live EDR — enable "Allow live EDR" to dispatch';
-            });
-            document.querySelectorAll('.lb-mode-body').forEach(body => {
-                const mode = body.dataset.mode || '';
-                if (!mode.startsWith('edr:')) return;
-                const profile = mode.slice(4);
-                if (!liveEdrProfiles.has(profile)) return;
+        for (const profile of liveEdrProfiles) {
+            const tab = document.querySelector(`#modeTabs .lb-tab[data-mode="edr:${profile}"]`);
+            if (tab) {
+                tab.classList.toggle('lb-tab--locked', !allowLive);
+                tab.title = allowLive ? '' : 'Live EDR — enable "Allow live EDR" to dispatch';
+            }
+            const body = document.querySelector(`.lb-mode-body[data-mode="edr:${profile}"]`);
+            if (body) {
                 const cta = body.querySelector('.lb-mode-cta');
                 if (cta) {
                     cta.disabled = !allowLive;
@@ -313,7 +305,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 const badge = body.querySelector('.lb-live-edr-badge');
                 if (badge) badge.classList.toggle('hidden', allowLive);
-            });
+            }
         }
     }
 
@@ -897,8 +889,6 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateFileInfo(fileInfo) {
         currentFileHash = fileInfo.md5;
         currentFileExtension = fileInfo.extension;
-
-        localStorage.setItem('allowLiveEdr', JSON.stringify(!!fileInfo.allow_live_edr));
 
         elements.fileName.textContent = fileInfo.original_name;
         elements.fileSize.textContent = formatFileSize(fileInfo.size);

@@ -14,7 +14,7 @@
 // operator decides if a static-fail run is worth observing dynamically).
 
 const cfg = window.__allRunCfg || { fileHash: '', edrProfiles: [], liveEdrProfiles: [], allowLiveEdr: false };
-const LIVE_EDR = new Set(cfg.liveEdrProfiles || []);
+const LIVE_EDR = new Set(cfg.liveEdrProfiles);
 const PAGE_START = Date.now();
 const POST_HEADERS = { 'Content-Type': 'application/json' };
 
