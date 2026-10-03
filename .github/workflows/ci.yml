@@ -15,6 +15,14 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Exclude paths from Windows Defender
+        run: |
+          Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
+          $pydir = (python -c "import sys; print(sys.prefix)")
+          Add-MpPreference -ExclusionPath "$pydir"
+          Add-MpPreference -ExclusionPath "$env:TEMP"
+        shell: pwsh
+
       - name: Install Python deps
         run: pip install -r requirements.txt pytest-timeout
 
