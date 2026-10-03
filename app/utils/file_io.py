@@ -41,7 +41,7 @@ class FileTypeDetector:
     # Extension-based families for types without reliable magic bytes.
     _EXT_FAMILIES = {
         '.html': 'html', '.htm': 'html',
-        '.msi': 'script', '.js': 'script', '.vbs': 'script',
+        '.msi': 'installer', '.js': 'script', '.vbs': 'script',
         '.ps1': 'script', '.bat': 'script', '.cmd': 'script', '.hta': 'script',
     }
 
@@ -143,6 +143,9 @@ class FileTypeDetector:
                 for stream, file_type in office_types.items():
                     if stream in streams:
                         return {"family": "office", "type": file_type}
+
+                if any(s.startswith("!") for s in streams):
+                    return {"family": "installer", "type": "msi"}
 
                 return {"family": "office", "type": "ole-unknown"}
         except ImportError:
