@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, Response, current_app, jsonify, redirect, request
 
 from ..services.error_handling import error_handler
-from ..utils import path_manager, reporting
+from ..utils import json_helpers, path_manager, reporting
 
 api_bp = Blueprint('api', __name__)
 
@@ -147,8 +147,10 @@ def api_edr_results(target, profile):
     if not os.path.exists(edr_path):
         return jsonify({'error': f'EDR results for profile {profile!r} not found'}), 404
 
-    with open(edr_path, 'r') as f:
-        return jsonify(json.load(f))
+    findings = json_helpers.load_json_file(edr_path)
+    if findings is None:
+        return jsonify({'error': 'EDR results could not be read'}), 500
+    return jsonify(json_helpers.cap_saved_stdio(findings))
 
 
 @api_bp.route('/api/results/edr/<target:target>', methods=['GET'])

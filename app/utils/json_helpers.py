@@ -103,3 +103,26 @@ def extract_detection_counts(results):
         pass
 
     return counts
+
+
+def cap_saved_stdio(edr_results: dict, cap: int = 256 * 1024) -> dict:
+    """Truncate `execution.{stdout,stderr}` in saved EDR findings.
+
+    Results saved before AgentClient capped output can hold hundreds of
+    MB of stdout (mimikatz spamming its prompt 18M times), which hung
+    the browser. Applied wherever saved EDR findings are served.
+    Returns the dict, modified in place.
+    """
+    exec_blk = edr_results.get('execution') if isinstance(edr_results, dict) else None
+    if not isinstance(exec_blk, dict):
+        return edr_results
+    for field in ('stdout', 'stderr'):
+        value = exec_blk.get(field)
+        if isinstance(value, str) and len(value.encode('utf-8', errors='replace')) > cap:
+            raw = value.encode('utf-8', errors='replace')
+            head = raw[:cap].decode('utf-8', errors='replace')
+            exec_blk[field] = (
+                f"{head}\n\n... [truncated by saved-view loader — "
+                f"original was {len(raw):,} bytes, kept first {cap:,}]"
+            )
+    return edr_results

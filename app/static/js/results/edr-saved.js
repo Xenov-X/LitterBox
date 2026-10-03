@@ -13,11 +13,22 @@
 // browser cache the JSON between reloads.
 
 import edrModule from './tools/edr.js';
+import { errorPanel } from './tools/_shared.js';
+
+function showLoadError(message) {
+    // Put the failure where the results would have been, instead of
+    // leaving every pane blank.
+    for (const id of ['edrAlertsResults', 'edrExecutionResults', 'edrSummary']) {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = errorPanel(message, null);
+    }
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
     const ref = window.__edrSavedRef;
     if (!ref || !ref.profile || !ref.target) {
         console.error('[edr-saved] window.__edrSavedRef is missing or incomplete');
+        showLoadError('Saved EDR result reference is missing');
         return;
     }
 
@@ -27,11 +38,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const resp = await fetch(url, { cache: 'no-store' });
         if (!resp.ok) {
             console.error(`[edr-saved] ${url} returned HTTP ${resp.status}`);
+            showLoadError(`Could not load saved EDR results (HTTP ${resp.status})`);
             return;
         }
         data = await resp.json();
     } catch (err) {
         console.error(`[edr-saved] fetch failed:`, err);
+        showLoadError(`Could not load saved EDR results: ${err.message}`);
         return;
     }
 

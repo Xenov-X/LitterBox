@@ -90,34 +90,10 @@ export class PayloadManager {
             if (output_truncated) {
                 infoText.push('Output was truncated due to size limitations');
             }
-            if (exit_code !== null) {
+            if (exit_code != null) {  // null or undefined: no exit code recorded
                 infoText.push(`Process exit code: ${exit_code}`);
             }
             this.info.textContent = infoText.join(' • ');
-        }
-    }
-}
-
-// Analysis Type Handler
-export class AnalysisTypeHandler {
-    constructor() {
-        this.setupAnalysisType();
-    }
-
-    isNumeric(str) {
-        return /^\d+$/.test(str);
-    }
-
-    setupAnalysisType() {
-        const pathSegments = window.location.pathname.split('/').filter(segment => segment.length > 0);
-        const identifier = pathSegments[pathSegments.length - 1];
-        
-        // If PID, hide static analysis button
-        if (this.isNumeric(identifier)) {
-            const staticButton = document.getElementById('staticAnalysisButton');
-            if (staticButton) {
-                staticButton.style.display = 'none';
-            }
         }
     }
 }

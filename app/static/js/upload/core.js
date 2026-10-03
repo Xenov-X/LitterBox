@@ -893,6 +893,8 @@ document.addEventListener('DOMContentLoaded', function() {
         elements.fileEntropy.textContent = fileInfo.entropy;
         elements.uploadTime.textContent = formatTimestamp(fileInfo.upload_time);
         elements.md5Hash.textContent = fileInfo.md5;
+        // copyHash() reads the full value from the hidden *HashFull span.
+        document.getElementById('md5HashFull').textContent = fileInfo.md5;
 
         elements.sha256Hash.textContent = `${fileInfo.sha256.substring(0, 32)}...`;
         document.getElementById('sha256HashFull').textContent = fileInfo.sha256;
@@ -977,10 +979,14 @@ document.addEventListener('DOMContentLoaded', function() {
     window.copyHash = function(elementId) {
         const hashType = elementId === 'md5Hash' ? 'md5' : 'sha256';
         const fullHash = document.getElementById(`${hashType}HashFull`).textContent;
+        if (!fullHash) {
+            showToast('No hash to copy yet', 'error');
+            return;
+        }
 
         navigator.clipboard.writeText(fullHash).then(() => {
             showToast(`${hashType.toUpperCase()} hash copied to clipboard`, 'success');
-        });
+        }).catch(() => showToast('Could not copy to clipboard', 'error'));
     }
 
     window.selectAnalysisType = function(type) {

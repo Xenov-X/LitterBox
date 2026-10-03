@@ -58,7 +58,7 @@ export default {
                 ${breakdown.map(item => `
                     <div style="padding: 10px; border: 1px solid ${item.value > 0 ? 'rgba(248, 113, 113, 0.22)' : 'var(--lb-border)'};">
                         <div class="lb-eyebrow" style="margin-bottom: 4px;">${escapeHtml(item.label)}</div>
-                        <div class="lb-mono lb-strong" style="font-size: 16px; color: ${item.value > 0 ? 'var(--lb-accent)' : 'var(--lb-text)'};">${item.value || 0}</div>
+                        <div class="lb-mono lb-strong" style="font-size: 16px; color: ${item.value > 0 ? 'var(--lb-accent)' : 'var(--lb-text)'};">${escapeHtml(String(item.value || 0))}</div>
                     </div>
                 `).join('')}
             </div>

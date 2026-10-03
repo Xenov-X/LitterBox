@@ -55,7 +55,7 @@ export default {
         html += Object.entries(findingsByThread).map(([tid, items]) => `
             <div class="lb-panel">
                 <div class="lb-panel-hdr">
-                    <span class="lb-glyph">▸</span>${tid === 'process' ? 'Process-wide Indicators' : `Thread ${tid}`}
+                    <span class="lb-glyph">▸</span>${tid === 'process' ? 'Process-wide Indicators' : `Thread ${escapeHtml(String(tid))}`}
                     <span class="lb-panel-badge">${items.length}</span>
                 </div>
                 <div class="lb-panel-body">

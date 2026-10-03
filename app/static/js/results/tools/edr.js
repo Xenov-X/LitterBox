@@ -35,14 +35,18 @@ import summaryTool from './summary.js';
 
 const HIGH_SEVERITY = new Set(['high', 'critical']);
 const POLLING_STATUS = 'polling_alerts';
-// Phase-2 poll cadence — starts tight (so first hits land fast), backs
-// off on consecutive ticks where the alert count didn't move, and gets
-// reset whenever new alerts arrive. Caps at POLL_MAX_MS so even a long
-// quiet window doesn't drift the dashboard out of sync. Tab-hidden
+// Phase-2 poll cadence. The server writes alerts once, when Phase 2
+// finishes, so the delay only backs off gently (2s -> 5s) to bound the
+// latency between Phase 2 finishing and the page noticing. Tab-hidden
 // pauses stop ticking entirely.
 const POLL_INTERVAL_MS = 2000;
-const POLL_MAX_MS      = 15000;
+const POLL_MAX_MS      = 5000;
 const POLL_BACKOFF     = 1.5;
+// Give up after the correlation window plus this margin, or after this
+// many consecutive failed polls: Phase 2 runs on a daemon thread that a
+// LitterBox restart kills, leaving the saved status at polling_alerts.
+const POLL_DEADLINE_MARGIN_MS = 120000;
+const POLL_MAX_FAILURES = 5;
 
 // Module-level handle so a re-render with a new payload aborts the old
 // poll loop (defensive — only one EDR result per page in practice).
@@ -51,6 +55,8 @@ let _pollDelay = POLL_INTERVAL_MS;
 let _pollLastCount = -1;
 let _pollPausedDueToHidden = false;
 let _pollResumeArgs = null;     // (profile,) for resumeIfPaused
+let _pollDeadline = null;       // ms timestamp; set when polling starts
+let _pollFailures = 0;
 
 function clearPoll() {
     if (_pollTimer != null) {
@@ -61,6 +67,19 @@ function clearPoll() {
     _pollLastCount = -1;
     _pollResumeArgs = null;
     _pollPausedDueToHidden = false;
+    _pollDeadline = null;
+    _pollFailures = 0;
+}
+
+/** Stop polling and say why — the saved result is stuck mid-correlation. */
+function abandonPoll(reason) {
+    clearPoll();
+    const target = document.getElementById('edrAlertsResults');
+    if (target) {
+        target.innerHTML = errorPanel(`Correlation did not complete: ${reason}`, null);
+        target.dataset.alertsKey = '';
+    }
+    updatePageStatus(false, 'error', `Correlation did not complete: ${reason}`);
 }
 
 // Pause the poll loop when the tab is hidden (no point pulling JSON
@@ -225,7 +244,7 @@ function renderAlerts(results) {
                     </svg>
                     <span class="lb-strong">Correlating alerts…</span>
                 </div>
-                <span class="lb-muted" style="font-size: 12px;">Polling every ${POLL_INTERVAL_MS / 1000}s, max ${max}s window.${blockedHint}</span>
+                <span class="lb-muted" style="font-size: 12px;">Polling every ${POLL_INTERVAL_MS / 1000}s, max ${escapeHtml(String(max))}s window.${blockedHint}</span>
             </div>`;
         return;
     }
@@ -358,7 +377,7 @@ function renderAlertRow(a, idx) {
         subjectCell = `${escapeHtml(file.name)}${writer}`;
     } else {
         subjectCell = proc.name
-            ? `${escapeHtml(proc.name)}${proc.pid != null ? ` <span class="lb-muted">(${proc.pid})</span>` : ''}`
+            ? `${escapeHtml(proc.name)}${proc.pid != null ? ` <span class="lb-muted">(${escapeHtml(String(proc.pid))})</span>` : ''}`
             : '—';
     }
     const procCell = subjectCell;
@@ -577,7 +596,7 @@ function renderAlertDetail(a) {
             return `<tr>
                 <td><span class="lb-tag ${ok ? 'critical' : 'medium'}">${escapeHtml(r.action || '—')}${r.tree ? ' · tree' : ''}</span></td>
                 <td class="lb-mono" style="font-size: 12px;">${escapeHtml(r.target_name || '—')}</td>
-                <td class="lb-mono" style="font-size: 12px;">${r.target_pid != null ? r.target_pid : '—'}</td>
+                <td class="lb-mono" style="font-size: 12px;">${r.target_pid != null ? escapeHtml(String(r.target_pid)) : '—'}</td>
                 <td class="lb-muted" style="font-size: 12px;">${escapeHtml(r.result_message || '—')}</td>
             </tr>`;
         }).join('');
@@ -594,7 +613,7 @@ function renderAlertDetail(a) {
     // User + tags.
     const meta = [];
     if (d.user && (d.user.name || d.user.domain)) {
-        meta.push(`<span class="lb-edr-meta-pill">User: ${escapeHtml((d.user.domain ? d.user.domain + '\\\\' : '') + (d.user.name || ''))}</span>`);
+        meta.push(`<span class="lb-edr-meta-pill">User: ${escapeHtml((d.user.domain ? d.user.domain + '\\' : '') + (d.user.name || ''))}</span>`);
     }
     if (d.event_action) {
         meta.push(`<span class="lb-edr-meta-pill">event.action: ${escapeHtml(Array.isArray(d.event_action) ? d.event_action.join(', ') : d.event_action)}</span>`);
@@ -718,7 +737,7 @@ function fileHashFromPath() {
     return parts[parts.length - 1];
 }
 
-function schedulePoll(profile) {
+function schedulePoll(profile, windowSeconds) {
     // Don't replace the resume-state on chained reschedules; the
     // backoff state lives across ticks. clearPoll resets it on every
     // explicit caller-driven (re)start.
@@ -729,6 +748,14 @@ function schedulePoll(profile) {
     const hash = fileHashFromPath();
     if (!hash || !profile) return;
     _pollResumeArgs = [profile];
+    if (_pollDeadline == null) {
+        const windowMs = (Number(windowSeconds) || 180) * 1000;
+        _pollDeadline = Date.now() + windowMs + POLL_DEADLINE_MARGIN_MS;
+    }
+    if (Date.now() > _pollDeadline) {
+        abandonPoll('no final result was saved within the correlation window (was LitterBox restarted?)');
+        return;
+    }
 
     // While the tab is hidden we don't need to be polling at all —
     // visibilitychange will resume us on focus.
@@ -743,10 +770,16 @@ function schedulePoll(profile) {
                 cache: 'no-store',
             });
             if (!resp.ok) {
-                // 404 during polling is unusual but not fatal — keep trying.
+                // Transient errors are retried; a run of them (e.g. 404
+                // after the results were deleted) ends the loop.
+                if (++_pollFailures >= POLL_MAX_FAILURES) {
+                    abandonPoll(`results endpoint returned HTTP ${resp.status}`);
+                    return;
+                }
                 schedulePoll(profile);
                 return;
             }
+            _pollFailures = 0;
             const updated = await resp.json();
 
             // Adapt the next-tick delay based on whether the alert
@@ -781,7 +814,7 @@ function schedulePoll(profile) {
             // Stop polling once the run is terminal.
             if (updated.status && updated.status !== POLLING_STATUS) {
                 clearPoll();
-                updatePageStatus(false);
+                updatePageStatus(false, updated.status, updated.error);
                 return;
             }
         } catch (err) {
@@ -798,11 +831,28 @@ function schedulePoll(profile) {
  * so the chip ticks through Phase 2 and freezes at the moment Phase 2
  * actually wraps up — not at the moment Phase 1 returns.
  */
-function updatePageStatus(polling) {
+const FAILED_STATUSES = new Set(['error', 'partial', 'busy', 'agent_unreachable']);
+
+function updatePageStatus(polling, finalStatus, errorText) {
     const statusEl = document.getElementById('analysisStatus');
     const iconEl   = document.getElementById('statusIcon');
     const core     = window.__analysisCore;
     if (!statusEl) return;
+    if (!polling && FAILED_STATUSES.has(finalStatus)) {
+        statusEl.textContent = errorText && String(errorText).startsWith('Correlation')
+            ? errorText
+            : `Analysis failed: ${finalStatus}${errorText ? ` — ${errorText}` : ''}`;
+        if (iconEl) {
+            iconEl.innerHTML = `
+                <svg width="20" height="20" fill="none" stroke="var(--lb-accent)" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>`;
+        }
+        if (core) {
+            try { core.updateTimer(); core.stopTimer(); } catch (e) { /* ignore */ }
+        }
+        return;
+    }
     if (polling) {
         statusEl.textContent = 'Correlating alerts…';
         if (iconEl) {
@@ -851,18 +901,18 @@ const edrModule = {
                 results.error || 'EDR analysis failed',
                 { profile: results.profile }
             );
-            updatePageStatus(false);
+            updatePageStatus(false, 'error', results.error);
             return;
         }
 
         renderAlerts(results);
 
         if (isPolling(results)) {
-            schedulePoll(results.profile);
+            schedulePoll(results.profile, (results.summary || {}).wait_seconds_for_alerts);
             updatePageStatus(true);
         } else {
             clearPoll();
-            updatePageStatus(false);
+            updatePageStatus(false, results.status, results.error);
         }
     },
 };

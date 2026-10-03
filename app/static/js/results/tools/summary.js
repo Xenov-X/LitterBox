@@ -46,7 +46,7 @@ export default {
                             <div class="lb-strong" style="color: var(--lb-accent); margin-bottom: 4px;">${escapeHtml(headline)}</div>
                             <div class="lb-muted" style="font-size: 12px;">${escapeHtml(results.error || (isEarly ? 'Process terminated early' : 'Analysis failed'))}${
                                 results.analysis_metadata?.total_duration
-                                    ? ` (terminated after ${results.analysis_metadata.total_duration}s)`
+                                    ? ` (terminated after ${escapeHtml(String(results.analysis_metadata.total_duration))}s)`
                                     : ''
                             }</div>
                         </td>
@@ -73,6 +73,15 @@ export default {
                     ['Name', info.name],
                     ['PID',  info.pid],
                     ['Path', info.path],
+                ], 1));
+            } else if (results.edr) {
+                // EDR runs: the sample was dropped on the agent's VM.
+                const e = results.edr;
+                const where = e.execution?.file_path || e.execution?.drop_path || e.sample_path;
+                targetEl.innerHTML = panel('Target', kvGrid([
+                    ['Profile', e.display_name || e.profile],
+                    ['Host', e.agent_info?.hostname || e.hostname],
+                    ['Path on VM', where || '—'],
                 ], 1));
             } else {
                 const filePath = results.checkplz?.findings?.scan_results?.file_path || 'No file path available';
@@ -264,7 +273,8 @@ export default {
                     stdout: e.stdout || '',
                     stderr: e.stderr || '',
                     had_output: !!(e.stdout || e.stderr),
-                    output_truncated: false,
+                    output_truncated: !!e.output_truncated,
+                    exit_code: e.exit_code ?? null,
                 },
             });
         }

@@ -261,9 +261,9 @@ class ByovdApp {
         requestAnimationFrame(() => {
           const sectionHTML = sectionBuilder();
           if (sectionHTML) {
-            const div = document.createElement('div');
-            div.innerHTML = sectionHTML;
-            progressiveContainer.appendChild(div.firstChild);
+            // Section templates start with whitespace, so the first child
+            // node is a text node — append the parsed markup as a whole.
+            progressiveContainer.insertAdjacentHTML('beforeend', sectionHTML);
           }
           resolve();
         });

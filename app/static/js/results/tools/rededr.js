@@ -2,6 +2,11 @@
 import { errorPanel, cleanState, threatState, statRow, panel, kvGrid, tag, escapeHtml, scanFailed, failurePanel } from './_shared.js';
 import { formatBytes } from '../renderers.js';
 
+/** 0x-prefixed address; non-numeric values (string-typed from ETW) are escaped. */
+function hexAddr(value) {
+    return typeof value === 'number' ? `0x${value.toString(16)}` : escapeHtml(String(value));
+}
+
 // Windows FILETIME → ISO-ish local time. RedEdr emits
 // record.EventHeader.TimeStamp.QuadPart which is 100-ns intervals since
 // 1601-01-01 UTC. Unix-epoch (1970) is 116444736000000000 of those.
@@ -300,7 +305,7 @@ export default {
                                 ${providerEntries.map(([prov, count]) => `
                                     <tr>
                                         <td class="lb-mono">${escapeHtml(prov)}</td>
-                                        <td class="lb-mono">${count}</td>
+                                        <td class="lb-mono">${escapeHtml(String(count))}</td>
                                     </tr>
                                 `).join('')}
                                 ${missingProviders.map(prov => `
@@ -320,7 +325,7 @@ export default {
             const baseStyle = 'padding: 8px 14px; background: transparent; border: 0; font-family: inherit; font-size: 13px; cursor: pointer;';
             const activeStyle = 'color: var(--lb-text); border-bottom: 2px solid var(--lb-accent-soft);';
             const inactiveStyle = 'color: var(--lb-text-dim); border-bottom: 2px solid transparent;';
-            return `<button onclick="switchInnerTab('${name}')" class="tab-button${active ? ' active' : ''}" style="${baseStyle} ${active ? activeStyle : inactiveStyle}">${label} (${count})</button>`;
+            return `<button onclick="switchInnerTab('${name}')" class="tab-button${active ? ' active' : ''}" style="${baseStyle} ${active ? activeStyle : inactiveStyle}">${label} (${escapeHtml(String(count))})</button>`;
         };
         html += `
             <div class="lb-panel">
@@ -341,7 +346,7 @@ export default {
                                 ${loadedDlls.map(dll => `
                                     <tr>
                                         <td class="lb-mono">${escapeHtml(dll.name || 'Unknown')}</td>
-                                        <td class="lb-mono lb-muted">${dll.addr ? '0x' + dll.addr.toString(16) : 'N/A'}</td>
+                                        <td class="lb-mono lb-muted">${dll.addr ? hexAddr(dll.addr) : 'N/A'}</td>
                                         <td class="lb-mono lb-muted">${dll.size ? formatBytes(dll.size) : 'N/A'}</td>
                                     </tr>
                                 `).join('')}
@@ -363,7 +368,7 @@ export default {
                                     ${imageLoads.map(img => `
                                         <tr>
                                             <td class="lb-mono">${escapeHtml(img.image_name?.split('\\').pop() || 'Unknown')}</td>
-                                            <td class="lb-mono lb-muted">${img.base ? '0x' + img.base.toString(16) : 'N/A'}</td>
+                                            <td class="lb-mono lb-muted">${img.base ? hexAddr(img.base) : 'N/A'}</td>
                                             <td class="lb-mono lb-muted">${formatBytes(img.size || 0)}</td>
                                         </tr>
                                     `).join('')}
@@ -377,7 +382,7 @@ export default {
                                     ${imageUnloads.map(img => `
                                         <tr>
                                             <td class="lb-mono">${escapeHtml(img.image_name?.split('\\').pop() || 'Unknown')}</td>
-                                            <td class="lb-mono lb-muted">${img.base ? '0x' + img.base.toString(16) : 'N/A'}</td>
+                                            <td class="lb-mono lb-muted">${img.base ? hexAddr(img.base) : 'N/A'}</td>
                                             <td class="lb-mono lb-muted">${formatBytes(img.size || 0)}</td>
                                         </tr>
                                     `).join('')}
@@ -396,8 +401,8 @@ export default {
                                     <tr>
                                         <td class="lb-mono">${escapeHtml(String(t.thread_id))}</td>
                                         <td class="lb-mono lb-muted">${escapeHtml(String(t.process_id))}</td>
-                                        <td class="lb-mono lb-muted">${t.start_addr ? '0x' + t.start_addr.toString(16) : 'N/A'}</td>
-                                        <td class="lb-mono lb-muted">${t.stack_base ? '0x' + t.stack_base.toString(16) : 'N/A'}</td>
+                                        <td class="lb-mono lb-muted">${t.start_addr ? hexAddr(t.start_addr) : 'N/A'}</td>
+                                        <td class="lb-mono lb-muted">${t.stack_base ? hexAddr(t.stack_base) : 'N/A'}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>

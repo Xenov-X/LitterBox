@@ -1,9 +1,9 @@
 // app/static/js/results/core.js
 // Entry point for the /results/<analysis_type>/<target> page.
-// Wires up TabManager, PayloadManager, AnalysisTypeHandler, ModalHandler
+// Wires up TabManager, PayloadManager, ModalHandler
 // and the AnalysisCore poll loop.
 
-import { TabManager, PayloadManager, AnalysisTypeHandler, ModalHandler } from './managers.js';
+import { TabManager, PayloadManager, ModalHandler } from './managers.js';
 import { UI } from './renderers.js';
 import { tools } from './tools.js';
 
@@ -283,11 +283,13 @@ window.startHolyGrailScan = function() {
         } else {
             // Handle error and restore button
             console.error('HolyGrail analysis failed:', data.error || data.message);
+            window.showNotification?.(`HolyGrail analysis failed: ${data.message || data.error || 'unknown error'}`, 'error');
             restoreHolyGrailButton();
         }
     })
     .catch(error => {
         console.error('HolyGrail analysis error:', error);
+        window.showNotification?.(`HolyGrail analysis failed: ${error.message}`, 'error');
         restoreHolyGrailButton();
     });
 
