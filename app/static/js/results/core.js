@@ -1,9 +1,9 @@
 // app/static/js/results/core.js
 // Entry point for the /results/<analysis_type>/<target> page.
-// Wires up TabManager, PayloadManager, AnalysisTypeHandler, ModalHandler
+// Wires up TabManager, PayloadManager, ModalHandler
 // and the AnalysisCore poll loop.
 
-import { TabManager, PayloadManager, AnalysisTypeHandler, ModalHandler } from './managers.js';
+import { TabManager, PayloadManager, ModalHandler } from './managers.js';
 import { UI } from './renderers.js';
 import { tools } from './tools.js';
 
@@ -70,15 +70,56 @@ class AnalysisCore {
         }
     }
 
+    /** The page was opened without a run token (reload, Back/Forward,
+     *  restored tab, link from elsewhere): don't execute the sample
+     *  automatically — offer an explicit button instead. */
+    showRunPrompt() {
+        this.updateStatusIcon('');
+        const status = this.elements.analysisStatus;
+        status.textContent = '';
+        const msg = document.createElement('span');
+        msg.textContent = 'Not started — this page was reloaded or opened directly. ';
+        const btn = document.createElement('button');
+        btn.className = 'lb-btn';
+        btn.style.marginLeft = '8px';
+        btn.textContent = this.analysisType === 'static' ? 'Run analysis' : 'Run analysis (executes the sample)';
+        btn.addEventListener('click', () => {
+            btn.disabled = true;
+            this.startTime = Date.now();
+            this.startAnalysis();
+        });
+        status.append(msg, btn);
+    }
+
+    renderResults(results) {
+        // Summary first, then each tool — isolate each so a single broken
+        // renderer doesn't suppress the rest.
+        if (tools.summary) {
+            try {
+                tools.summary.render(results);
+            } catch (err) {
+                console.error('[results] summary render failed:', err);
+            }
+        }
+        Object.entries(results).forEach(([toolKey, toolResults]) => {
+            if (toolResults && tools[toolKey] && toolKey !== 'summary') {
+                try {
+                    tools[toolKey].render(toolResults);
+                } catch (err) {
+                    console.error(`[results] ${toolKey} render failed:`, err);
+                }
+            }
+        });
+    }
+
     async startAnalysis() {
         this.updateStatusIcon('running');
         this.elements.analysisStatus.textContent = 'Running analysis...';
         this.startTimer();
 
         try {
-            // Retrieve the arguments from localStorage
-            const savedArgs = localStorage.getItem('analysisArgs');
-            const args = savedArgs ? JSON.parse(savedArgs) : []; // Default to an empty array if no args are saved
+            // Args are saved per sample by the page that started the run.
+            const args = loadArgs(this.fileHash);
 
             // POST to the same path the page was loaded from. This naturally
             // handles the EDR case (/analyze/edr/<profile>/<hash>) without
@@ -93,7 +134,12 @@ class AnalysisCore {
                 })
             });
 
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch {
+                data = { status: 'error', error: `Server returned HTTP ${response.status} (non-JSON response)` };
+            }
 
             // Handle early termination
             if (data.status === 'early_termination') {
@@ -117,6 +163,30 @@ class AnalysisCore {
                 return;
             }
             
+            // Failed request: HTTP error, analysis error envelope, or an EDR
+            // dispatch that never ran (busy / agent_unreachable). Never fall
+            // through to "Analysis completed" — an empty result set here
+            // means "no verdict", not "clean".
+            const failed = !response.ok || ['error', 'busy', 'agent_unreachable'].includes(data.status);
+            if (failed) {
+                this.updateTimer();
+                this.stopTimer();
+                this.updateStatusIcon('error');
+                const reason = data.error || data.message
+                    || data.results?.edr?.error || `HTTP ${response.status}`;
+                const detail = typeof data.details === 'string' && data.details ? ` — ${data.details}` : '';
+                this.elements.analysisStatus.textContent = `Analysis failed: ${reason}${detail}`;
+
+                if (data.results) {
+                    // EDR 409/502 responses still carry a result envelope —
+                    // render it so the tabs show what the agent reported.
+                    this.renderResults(data.results);
+                } else if (tools.summary) {
+                    tools.summary.render({ status: 'error', error: `${reason}${detail}` });
+                }
+                return;
+            }
+
             // Normal completion flow.
             //
             // Special-case EDR runs that are still in their Phase-2 alert
@@ -135,26 +205,7 @@ class AnalysisCore {
                 this.updateStageToComplete();
             }
 
-            // First update the summary with all results
-            if (tools.summary && data.results) {
-                try {
-                    tools.summary.render(data.results);
-                } catch (err) {
-                    console.error('[results] summary render failed:', err);
-                }
-            }
-
-            // Then process individual tool results — isolate each so a
-            // single broken renderer doesn't suppress the rest.
-            Object.entries(data.results || {}).forEach(([toolKey, results]) => {
-                if (results && tools[toolKey] && toolKey !== 'summary') {
-                    try {
-                        tools[toolKey].render(results);
-                    } catch (err) {
-                        console.error(`[results] ${toolKey} render failed:`, err);
-                    }
-                }
-            });
+            this.renderResults(data.results || {});
         } catch (error) {
             this.stopTimer();
             this.updateStatusIcon('error');
@@ -162,6 +213,19 @@ class AnalysisCore {
         }
     }
 
+}
+
+function argsKey(fileHash) {
+    return `analysisArgs:${fileHash}`;
+}
+
+function loadArgs(fileHash) {
+    try {
+        const saved = JSON.parse(localStorage.getItem(argsKey(fileHash)) || '[]');
+        return Array.isArray(saved) ? saved : [];
+    } catch {
+        return [];
+    }
 }
 
 function handleUrlIdentifier() {
@@ -205,7 +269,7 @@ window.startHolyGrailScan = function() {
     }
 
     // Call HolyGrail analysis endpoint
-    fetch(`/holygrail?hash=${fileHash}`, {
+    fetch(`/holygrail?hash=${encodeURIComponent(fileHash)}`, {
         method: 'GET',
         headers: {
             'Content-Type': 'application/json'
@@ -215,15 +279,17 @@ window.startHolyGrailScan = function() {
     .then(data => {
         if (data.status === 'success') {
             // Redirect to results page
-            window.location.href = `/results/byovd/${fileHash}`;
+            window.location.href = `/results/byovd/${encodeURIComponent(fileHash)}`;
         } else {
             // Handle error and restore button
             console.error('HolyGrail analysis failed:', data.error || data.message);
+            window.showNotification?.(`HolyGrail analysis failed: ${data.message || data.error || 'unknown error'}`, 'error');
             restoreHolyGrailButton();
         }
     })
     .catch(error => {
         console.error('HolyGrail analysis error:', error);
+        window.showNotification?.(`HolyGrail analysis failed: ${error.message}`, 'error');
         restoreHolyGrailButton();
     });
 
@@ -262,47 +328,33 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Initialize PayloadManager
     const payloadManager = new PayloadManager();
-    // Check file extension and show appropriate button
-    const fileExtension = localStorage.getItem('currentFileExtension');
-    const dynamicButton = document.getElementById('dynamicAnalysisButton');
-    const holygrailButton = document.getElementById('holygrailAnalysisButton');
-    
-    if (fileExtension && fileExtension.toLowerCase() === 'sys') {
-        // Show HolyGrail button for .sys files
-        if (dynamicButton) dynamicButton.style.display = 'none';
-        if (holygrailButton) holygrailButton.style.display = 'flex';
-    } else {
-        // Show Dynamic Analysis button for other files
-        if (holygrailButton) holygrailButton.style.display = 'none';
-        if (dynamicButton) dynamicButton.style.display = 'flex';
-    }
+    // Dynamic vs HolyGrail button: the server renders the right one for
+    // this sample (drivers get HolyGrail).
     // Make modal functions globally accessible
     window.showDynamicWarning = () => {
         // Pre-populate the args input with whatever was last used so the user
         // can re-run with the same args or tweak them.
         const argsInput = document.getElementById('dynamicAnalysisArgs');
-        if (argsInput) {
-            try {
-                const saved = JSON.parse(localStorage.getItem('analysisArgs') || '[]');
-                argsInput.value = Array.isArray(saved) ? saved.join(' ') : '';
-            } catch {
-                argsInput.value = '';
-            }
-        }
+        if (argsInput) argsInput.value = loadArgs(analysis.fileHash).join(' ');
         modal.show();
     };
     window.hideDynamicWarning = () => modal.hide();
-    window.proceedWithDynamicAnalysis = (fileHash) => {
+    window.proceedWithDynamicAnalysis = () => {
         const argsInput = document.getElementById('dynamicAnalysisArgs');
         const argsValue = argsInput ? argsInput.value : '';
         const args = argsValue.split(' ').filter(arg => arg.trim() !== '');
-        localStorage.setItem('analysisArgs', JSON.stringify(args));
-        window.location.href = `/analyze/dynamic/${fileHash}`;
+        localStorage.setItem(argsKey(analysis.fileHash), JSON.stringify(args));
+        window.lbStartRun(`/analyze/dynamic/${encodeURIComponent(analysis.fileHash)}`);
     };
 
-    // Start analysis if parameters exist
+    // Run only when this tab's UI started the run (one-time token);
+    // otherwise ask before executing the sample again.
     if (analysis.analysisType && analysis.fileHash) {
-        analysis.startAnalysis();
+        if (window.lbConsumeRun()) {
+            analysis.startAnalysis();
+        } else {
+            analysis.showRunPrompt();
+        }
     }
 
     // Use PayloadManager methods

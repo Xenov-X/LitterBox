@@ -13,7 +13,7 @@
 <div class="lb-panel">
     <div class="lb-panel-hdr">
         <span class="lb-glyph">▸</span>Static Analysis Summary
-        <button onclick="window.location.href='/results/info/{{ file_info.md5 }}'" class="lb-btn lb-btn-ghost" style="margin-left: auto; padding: 2px 10px; font-size: 12px;" aria-label="Navigate back to file information">
+        <button data-href="/results/info/{{ file_info.md5|urlencode }}" class="lb-btn lb-btn-ghost" style="margin-left: auto; padding: 2px 10px; font-size: 12px;" aria-label="Navigate back to file information">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7"/></svg>
             Back to File Info
         </button>
@@ -28,7 +28,7 @@
 </div>
 
 <!-- Status grid -->
-{{ status_grid_3(yara_detections + checkplz_detections, 'Scan Duration', scan_duration) }}
+{{ status_grid_3(yara_detections + checkplz_detections, 'Scan Duration', scan_duration, [analysis_results.yara, analysis_results.checkplz]) }}
 
 <!-- Scanner Results -->
 <div class="lb-panel">
@@ -36,10 +36,10 @@
     <table class="lb-table">
         {{ scanner_table_header() }}
         <tbody id="scannerResultsBody">
-            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches) }}
+            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches, analysis_results.yara) }}
             <tr>
                 <td>CheckPlz</td>
-                {{ scanner_status_cell(checkplz_detections) }}
+                {{ scanner_status_cell(checkplz_detections, analysis_results.checkplz) }}
                 {{ scanner_count_cell(checkplz_detections) }}
                 <td class="lb-muted" style="font-size: 12px;">
                     {{ analysis_results.checkplz.findings.initial_threat if checkplz_detections else 'No signatures triggered' }}

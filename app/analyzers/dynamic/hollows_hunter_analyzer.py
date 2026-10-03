@@ -8,7 +8,6 @@ class HollowsHunterAnalyzer(BaseSubprocessAnalyzer):
     tool_section = 'dynamic'
     tool_name = 'hollows_hunter'
     target_kwarg = 'directory'
-    use_timeout = False
 
     def __init__(self, config):
         super().__init__(config)

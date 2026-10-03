@@ -18,6 +18,7 @@ from typing import Annotated, List, Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from litterbox_client import LitterBoxClient
@@ -91,7 +92,7 @@ async def analyze_static(
     return await _call(client.analyze_file, file_hash, "static", wait_for_completion=wait)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
 async def analyze_dynamic(
     target: Annotated[str, Field(description="MD5 hash of an uploaded file OR a numeric PID for a running process.")],
     cmd_args: Annotated[Optional[List[str]], Field(description="Command-line arguments passed to the payload.")] = None,
@@ -127,43 +128,43 @@ async def validate_pid(
 # Retrieval — fetch analysis results and reports
 # =============================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_file_info(file_hash: str) -> dict:
     """File metadata: type, size, hashes, entropy, PE structure, sensitive imports."""
     return await _call(client.get_file_info, file_hash)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_static_results(file_hash: str) -> dict:
     """Static analysis output (YARA matches, CheckPlz findings, Stringnalyzer indicators)."""
     return await _call(client.get_static_results, file_hash)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_dynamic_results(target: str) -> dict:
     """Dynamic analysis output (memory scanners, behavioral telemetry, process output)."""
     return await _call(client.get_dynamic_results, target)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_holygrail_results(file_hash: str) -> dict:
     """HolyGrail BYOVD output for a driver (LOLDrivers / block status / critical imports)."""
     return await _call(client.get_holygrail_results, file_hash)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_risk_assessment(target: str) -> dict:
     """Computed detection assessment: numerical score, level (Low / Medium / High / Critical), triggering indicators."""
     return await _call(client.get_risk_assessment, target)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_comprehensive_results(target: str) -> dict:
     """All available results in one parallel call (file_info + static + dynamic + holygrail)."""
     return await _call(client.get_comprehensive_results, target)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_report(target: str) -> str:
     """Render the full HTML analysis report and return it inline as a string."""
     return await _call(client.get_report, target)
@@ -183,20 +184,20 @@ async def download_report(
 # EDR — Whiskers agent + pluggable detection backends
 # =============================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def list_edr_profiles() -> dict:
     """List EDR profiles registered under Config/edr_profiles/."""
     return await _call(client.list_edr_profiles)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_edr_agents_status() -> dict:
     """Live probe of every EDR profile (Whiskers agent + Elastic stack reachability,
     hostname, agent version, lock state, cluster info)."""
     return await _call(client.get_edr_agents_status)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
 async def analyze_edr(
     file_hash: Annotated[str, Field(description="MD5 hash of an uploaded file.")],
     profile: Annotated[str, Field(description="EDR profile name (matches Config/edr_profiles/<name>.yml).")],
@@ -221,7 +222,7 @@ async def analyze_edr(
     return {'phase_1': phase1, 'phase_2': phase2}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_edr_results(
     file_hash: Annotated[str, Field(description="MD5 hash of the analyzed payload.")],
     profile: Annotated[str, Field(description="EDR profile name.")],
@@ -230,7 +231,7 @@ async def get_edr_results(
     return await _call(client.get_edr_results, file_hash, profile)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_edr_index(
     file_hash: Annotated[str, Field(description="MD5 hash of the analyzed payload.")],
 ) -> dict:
@@ -238,7 +239,7 @@ async def get_edr_index(
     return await _call(client.get_edr_index, file_hash)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def fibratus_alerts_since(
     profile: Annotated[str, Field(description="Fibratus profile name (must be kind=fibratus).")],
     since_iso: Annotated[str, Field(description="ISO8601 lower bound in UTC, e.g. '2026-04-30T00:00:00Z'.")],
@@ -261,7 +262,7 @@ async def fibratus_alerts_since(
 # System health — local scanner inventory
 # =============================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_scanners_status() -> dict:
     """Inventory of configured local analyzers (static + dynamic + holygrail) and
     whether their binaries are present on disk. Drives the dashboard panel and
@@ -307,19 +308,19 @@ async def create_fuzzy_database(
 # Fleet — list / status / cleanup
 # =============================================================================
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def list_payloads() -> dict:
     """List every analyzed payload, driver, and process in the sandbox with detection summary."""
     return await _call(client.get_files_summary)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def sandbox_status() -> dict:
     """Health, tool readiness, and fleet summary for the LitterBox server."""
     return await _call(client.get_system_status)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=False))
 async def cleanup_sandbox(
     include_uploads: bool = True,
     include_results: bool = True,
@@ -334,7 +335,7 @@ async def cleanup_sandbox(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True))
 async def delete_payload(file_hash: str) -> dict:
     """Delete one payload and its results. DESTRUCTIVE — confirm with the user before calling."""
     return await _call(client.delete_file, file_hash)

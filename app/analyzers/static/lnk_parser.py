@@ -133,7 +133,7 @@ class LnkForensics:
         """Convert Windows FILETIME to human readable format."""
         try:
             return datetime.datetime.fromtimestamp(time / 10000000.0 - 11644473600).strftime('%Y-%m-%d %H:%M:%S')
-        except:
+        except Exception:
             return "Invalid timestamp"
     
     def _read_string(self, index: int) -> str:
@@ -152,10 +152,14 @@ class LnkForensics:
             string_size = struct.unpack('<H', self.indata[index: index + 2])[0] * u_mult
             if index + 2 + string_size > len(self.indata):
                 return index + 2, ""
-            string = self._clean_line(self.indata[index + 2: index + 2 + string_size].replace(b'\x00', b''))
+            raw = self.indata[index + 2: index + 2 + string_size]
+            if u_mult == 2:
+                string = raw.decode('utf-16-le', errors='replace').rstrip('\x00')
+            else:
+                string = self._clean_line(raw)
             new_index = index + string_size + 2
             return new_index, string
-        except:
+        except Exception:
             return index + 2, ""
     
     def _parse_lnk_header(self) -> bool:
@@ -260,7 +264,7 @@ class LnkForensics:
                 'birth_droid_volume_identifier': self.indata[index + 64: index + 80].hex(),
                 'birth_droid_file_identifier': self.indata[index + 80: index + 96].hex(),
             }
-        except:
+        except Exception:
             pass
     
     def _parse_environment_block(self, index: int, size: int):
@@ -270,7 +274,7 @@ class LnkForensics:
                 'size': size,
                 'variable_location': self._clean_line(self.indata[index + 8: index + 8 + size])
             }
-        except:
+        except Exception:
             pass
     
     def _get_enabled_flags(self, flags_dict: Dict[str, bool]) -> List[str]:
@@ -292,7 +296,7 @@ class LnkForensics:
                 try:
                     targets_size = struct.unpack('<H', self.indata[index: index + 2])[0]
                     index += 2 + targets_size
-                except:
+                except Exception:
                     pass
             
             # Parse LinkInfo if present  
@@ -349,7 +353,7 @@ class LnkForensics:
                         }
                     
                     index += self.loc_information['LinkInfoSize']
-                except:
+                except Exception:
                     pass
             
             # Parse string data
@@ -370,7 +374,7 @@ class LnkForensics:
                 
                 if self.linkFlag['HasIconLocation']:
                     index, self.data['iconLocation'] = self._read_string_data(index, u_mult)
-            except:
+            except Exception:
                 pass
             
             # Parse extra blocks
@@ -389,9 +393,9 @@ class LnkForensics:
                         if sig in extra_sigs:
                             extra_sigs[sig](index, size)
                         index += size
-                    except:
+                    except Exception:
                         break
-            except:
+            except Exception:
                 pass
             
             self.parsed = True
@@ -624,26 +628,26 @@ def analyze_lnk_file(file_path: str) -> Dict[str, Any]:
 def get_lnk_command(file_path: str) -> str:
     """
     Extract just the target command from LNK file.
-    
+
     Args:
         file_path: Path to LNK file
-    
+
     Returns:
         Target command string
     """
     try:
         lnk = LnkForensics(file_path)
         return lnk.get_target_command()
-    except:
+    except Exception:
         return ""
 
 def get_lnk_machine_id(file_path: str) -> str:
     """
     Extract machine identifier for attribution.
-    
+
     Args:
         file_path: Path to LNK file
-    
+
     Returns:
         Machine identifier string
     """
@@ -651,7 +655,7 @@ def get_lnk_machine_id(file_path: str) -> str:
         lnk = LnkForensics(file_path)
         tracking = lnk.get_machine_tracking()
         return tracking.get('machine_identifier', '')
-    except:
+    except Exception:
         return ""
 
 

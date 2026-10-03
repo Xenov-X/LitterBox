@@ -1,12 +1,13 @@
 # app/analyzers/manager.py
 
 import logging
+import os
 import subprocess
+import threading
 import time
 import psutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Type, Optional, Tuple
-from abc import ABC, abstractmethod
 
 # Import analyzers
 from .static.yara_analyzer import YaraStaticAnalyzer
@@ -18,16 +19,16 @@ from .dynamic.moneta_analyzer import MonetaAnalyzer
 from .dynamic.patriot_analyzer import PatriotAnalyzer
 from .dynamic.hsb_analyzer import HSBAnalyzer
 from .dynamic.rededr_analyzer import RedEdrAnalyzer
+from .base import BaseAnalyzer
+from .process_utils import JobObject, OutputDrain, kill_tree
 
+# Windows CreateProcess flag; the sample is resumed after it has been put
+# in its job object so nothing it spawns can escape the job.
+_CREATE_SUSPENDED = 0x00000004
 
-class BaseAnalyzer(ABC):
-    @abstractmethod
-    def analyze(self, target):
-        pass
-
-    @abstractmethod
-    def get_results(self):
-        pass
+# Only one dynamic analysis at a time: the samples share the host, and
+# system-wide scanners (HollowsHunter) would observe each other's payloads.
+_DYNAMIC_LOCK = threading.Lock()
 
 
 class AnalysisManager:
@@ -152,12 +153,18 @@ class AnalysisManager:
         """Run one analyzer, catching exceptions so a single failure
         doesn't take down the rest of the batch. Logs start + completion
         with per-tool wall time so the operator can see progress in the
-        debug log."""
+        debug log.
+
+        A fresh instance runs each analysis: analyzers keep per-run state
+        (target, results) on `self`, and the registered instances are
+        shared by every request thread.
+        """
         self.logger.debug(f"Running {name}")
         t0 = time.monotonic()
         try:
-            analyzer.analyze(target)
-            result = analyzer.get_results()
+            instance = type(analyzer)(self.config)
+            instance.analyze(target)
+            result = instance.get_results()
         except Exception as e:
             self.logger.error(f"Error in {name}: {str(e)}")
             result = {'status': 'error', 'error': str(e)}
@@ -225,22 +232,42 @@ class AnalysisManager:
     def run_dynamic_analysis(self, target, is_pid: bool = False, cmd_args: list = None) -> dict:
         self.logger.debug(f"Starting dynamic analysis - Target: {target}, is_pid: {is_pid}, args: {cmd_args}")
         start_time = time.time()
-        
+
+        if not _DYNAMIC_LOCK.acquire(blocking=False):
+            return {
+                'status': 'busy',
+                'error': {
+                    'message': 'Another dynamic analysis is already running',
+                    'details': 'Wait for it to finish, then retry.',
+                },
+            }
         try:
             if is_pid:
                 return self._run_pid_analysis(target, start_time)
             else:
                 return self._run_file_analysis(target, cmd_args, start_time)
-                
+
         except Exception as e:
             self.logger.error(f"Error during dynamic analysis: {str(e)}", exc_info=True)
             return self._create_error_result(start_time, str(e), cmd_args)
+        finally:
+            _DYNAMIC_LOCK.release()
 
     def _run_pid_analysis(self, target: str, start_time: float) -> dict:
         """Handle PID-based analysis"""
         try:
             process, pid = self._validate_process(target, True)
-            results = self._run_analyzers(self.dynamic_analyzers, pid, 'dynamic')
+            # RedEdr attaches ETW tracing before the payload is spawned, so it
+            # can't observe an already-running PID. Report it as skipped
+            # rather than "completed, 0 events".
+            analyzers = {k: v for k, v in self.dynamic_analyzers.items() if k != 'rededr'}
+            results = self._run_analyzers(analyzers, pid, 'dynamic')
+            if 'rededr' in self.dynamic_analyzers and isinstance(results, dict) \
+                    and results.get('status') != 'error':
+                results['rededr'] = {
+                    'status': 'skipped',
+                    'reason': 'RedEdr traces payloads it launches; not available for PID analysis',
+                }
             results['analysis_metadata'] = self._create_metadata(start_time, cmd_args=[])
             return results
         except Exception as e:
@@ -297,6 +324,9 @@ class AnalysisManager:
             return response
 
         finally:
+            # Never leave the sample (or anything it spawned) running.
+            if process is not None:
+                self._terminate_sample(process)
             # Always tear down RedEdr — even on early return / exception —
             # so a crashed payload never leaves an orphaned RedEdr process.
             # Cleanup is idempotent, so calling it after the happy-path
@@ -319,9 +349,9 @@ class AnalysisManager:
         """Initialize RedEdr if enabled.
 
         Blocks until RedEdr logs that all ETW providers are attached
-        (typically 1-3s). No timeout — failure surfaces as a quick subprocess
-        exit, which the reader thread also unblocks on. Callers that want a
-        hard deadline get it from the surrounding analysis-pipeline timeout.
+        (typically 1-3s), RedEdr exits, or `ready_timeout` (default 30s)
+        passes — a RedEdr that stays alive without attaching must not hang
+        the analysis before the payload is even launched.
         """
         rededr_config = self.config['analysis']['dynamic'].get('rededr', {})
         if not rededr_config.get('enabled'):
@@ -343,8 +373,9 @@ class AnalysisManager:
                 results['rededr'] = {'status': 'error', 'error': 'Failed to start tool'}
                 return None
 
+            ready_timeout = float(rededr_config.get('ready_timeout', 30))
             ready_start = time.monotonic()
-            rededr.wait_for_ready()
+            signalled = rededr.wait_for_ready(timeout=ready_timeout)
             elapsed = time.monotonic() - ready_start
             if rededr.is_ready():
                 self.logger.debug(
@@ -352,11 +383,13 @@ class AnalysisManager:
                 )
                 return rededr
 
-            # Reader thread unblocked because RedEdr exited before signaling
-            # readiness. Capture whatever output we collected for diagnostics.
-            self.logger.error(
-                f"RedEdr exited after {elapsed:.2f}s without signaling readiness"
+            # RedEdr exited before signaling readiness, or never signaled.
+            # Capture whatever output we collected for diagnostics.
+            reason = (
+                'RedEdr exited before ETW providers attached' if signalled
+                else f'RedEdr did not attach ETW providers within {ready_timeout:.0f}s'
             )
+            self.logger.error(f"{reason} (after {elapsed:.2f}s)")
             try:
                 rededr.cleanup()
             except Exception:
@@ -364,7 +397,7 @@ class AnalysisManager:
             tail = '\n'.join(rededr.collected_output[-20:]) if rededr.collected_output else ''
             results['rededr'] = {
                 'status': 'error',
-                'error': 'RedEdr exited before ETW providers attached',
+                'error': reason,
                 'last_output': tail,
             }
             return None
@@ -382,33 +415,53 @@ class AnalysisManager:
             self.logger.error(f"Error cleaning up RedEdr: {e}")
 
     def _capture_process_output(self, process) -> dict:
-        """Capture output from process"""
+        """Stop the sample and return what it wrote.
+
+        Output is read continuously by an OutputDrain from launch onwards
+        (bounded to 1 MB per stream); here the sample's whole process tree
+        is terminated and the drain is collected.
+        """
         if not process:
             return {'had_output': False, 'error': 'No process to capture output from'}
-            
+
         self.logger.debug("Capturing process output")
+        exited_on_its_own = process.poll() is not None
+        self._terminate_sample(process)
+
+        drain = getattr(process, '_lb_drain', None)
+        if drain is None:
+            return {'had_output': False, 'error': 'Process output was not captured', 'output_truncated': False}
+        drain.join(timeout=2)
+        stdout = drain.text('stdout').strip()
+        stderr = drain.text('stderr').strip()
+        result = {
+            'stdout': stdout,
+            'stderr': stderr,
+            'had_output': bool(stdout or stderr),
+            'output_truncated': drain.truncated,
+            # Only meaningful when the sample exited by itself.
+            'exit_code': process.returncode if exited_on_its_own else None,
+        }
+        if not exited_on_its_own:
+            result['note'] = 'Process terminated after analysis'
+        return result
+
+    def _terminate_sample(self, process):
+        """Kill the sample and everything it spawned. Idempotent."""
+        job = getattr(process, '_lb_job', None)
+        if job is not None:
+            try:
+                job.close()
+            except Exception as e:
+                self.logger.error(f"Error terminating job object: {e}")
         try:
-            stdout, stderr = process.communicate(timeout=1)
-            return {
-                'stdout': stdout.strip() if stdout else '',
-                'stderr': stderr.strip() if stderr else '',
-                'had_output': bool(stdout.strip() or stderr.strip()),
-                'output_truncated': False
-            }
-        except subprocess.TimeoutExpired:
-            self.logger.debug("Output capture timed out; killing the process")
-            self._cleanup_process(process, False)
-            stdout, stderr = process.communicate()
-            return {
-                'stdout': stdout.strip() if stdout else '',
-                'stderr': stderr.strip() if stderr else '',
-                'had_output': bool(stdout.strip() or stderr.strip()),
-                'output_truncated': False,
-                'note': 'Process killed after timeout'
-            }
+            kill_tree(process.pid)
         except Exception as e:
-            self.logger.error(f"Error capturing process output: {e}")
-            return {'error': str(e), 'had_output': False, 'output_truncated': False}
+            self.logger.error(f"Error killing process tree {process.pid}: {e}")
+        try:
+            process.wait(timeout=5)
+        except Exception:
+            pass
 
     def _handle_process_startup_error(self, error: Exception, start_time: float, cmd_args: list) -> dict:
         """Handle errors during process startup"""
@@ -497,27 +550,50 @@ class AnalysisManager:
                 command.extend(cmd_args)
             self.logger.debug(f"Starting new process: {command}")
         
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
+        popen_kwargs = {}
+        job = JobObject()
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            popen_kwargs['startupinfo'] = startupinfo
+            if job.handle:
+                # Start suspended so the sample is in the job before it
+                # can spawn anything.
+                popen_kwargs['creationflags'] = _CREATE_SUSPENDED
+        else:
+            popen_kwargs['start_new_session'] = True
 
         try:
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                startupinfo=startupinfo,
-                bufsize=1,
-                text=True,
+                **popen_kwargs,
             )
-            pid = process.pid
-            self.logger.debug(f"Process started with PID: {pid}")
+        except Exception as e:
+            job.close()
+            raise Exception(f"Failed to start process: {str(e)}")
 
+        process._lb_job = job
+        if popen_kwargs.get('creationflags', 0) & _CREATE_SUSPENDED:
+            job.assign(process)
+            try:
+                psutil.Process(process.pid).resume()
+            except Exception as e:
+                self._terminate_sample(process)
+                raise Exception(f"Failed to start process: could not resume suspended process: {e}")
+        # Read stdout/stderr while the sample runs so it never blocks on a
+        # full pipe during analysis.
+        process._lb_drain = OutputDrain(process)
+
+        pid = process.pid
+        self.logger.debug(f"Process started with PID: {pid}")
+        try:
             self._wait_for_process_initialization(process, pid, command)
-            return process, pid
-            
         except Exception as e:
             raise Exception(f"Failed to start process: {str(e)}")
+        return process, pid
 
     def _wait_for_process_initialization(self, process: subprocess.Popen, pid: int, command: list):
         """Wait for process to initialize and validate it's still running"""
@@ -543,63 +619,10 @@ class AnalysisManager:
                 raise Exception("Process terminated during initialization")
                 
         except psutil.NoSuchProcess:
+            # The sample exited, but anything it spawned is still in its job.
+            self._terminate_sample(process)
             cmd_str = ' '.join(command)
             raise Exception(f"Process {pid} terminated immediately after start (Command: {cmd_str})")
-        except Exception as e:
-            if process:
-                try:
-                    process.kill()
-                except:
-                    pass
-            raise e
-
-    def _cleanup_process(self, process, is_pid: bool):
-        if process and not is_pid:
-            self.logger.debug(f"Starting cleanup of process PID: {process.pid}")
-            try:
-                try:
-                    parent = psutil.Process(process.pid)
-                    if not parent.is_running():
-                        self.logger.debug(f"Process {process.pid} has already terminated")
-                        return
-                except psutil.NoSuchProcess:
-                    self.logger.debug(f"Process {process.pid} no longer exists")
-                    return
-                
-                # Get and terminate children
-                try:
-                    children = parent.children(recursive=True)
-                    self.logger.debug(f"Found {len(children)} child processes to terminate")
-                    
-                    for child in children:
-                        try:
-                            if child.is_running():
-                                self.logger.debug(f"Terminating child process: {child.pid}")
-                                child.terminate()
-                                child.wait(timeout=3)
-                        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
-                            try:
-                                if child.is_running():
-                                    child.kill()
-                            except psutil.NoSuchProcess:
-                                pass
-                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                    self.logger.error(f"Failed to get child processes: {e}")
-                
-                # Terminate parent
-                try:
-                    if parent.is_running():
-                        self.logger.debug(f"Terminating parent process: {parent.pid}")
-                        parent.terminate()
-                        parent.wait(timeout=3)
-                        
-                        if parent.is_running():
-                            self.logger.debug(f"Force killing parent process: {parent.pid}")
-                            parent.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired) as e:
-                    self.logger.error(f"Failed to terminate parent process: {e}")
-                
-                self.logger.debug("Process cleanup completed")
-                
-            except Exception as e:
-                self.logger.error(f"Error during process cleanup: {str(e)}", exc_info=True)
+        except Exception:
+            self._terminate_sample(process)
+            raise

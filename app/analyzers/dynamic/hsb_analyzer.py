@@ -19,6 +19,26 @@ class HSBAnalyzer(BaseSubprocessAnalyzer):
     tool_name = 'hsb'
     target_kwarg = 'pid'
 
+    def _build_command(self, cfg, target):
+        argv = super()._build_command(cfg, target)
+        if target == '*':
+            # System-wide scan (Blender): HSB has no `-p *`; omitting the
+            # PID option makes it scan every accessible process.
+            cleaned = []
+            skip_next = False
+            for token in argv:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if token in ('-p', '--pid'):
+                    skip_next = True
+                    continue
+                if token == '*':
+                    continue
+                cleaned.append(token)
+            argv = cleaned
+        return argv
+
     def _preprocess_stdout(self, stdout):
         return _ANSI_ESCAPE.sub('', stdout)
 
@@ -35,17 +55,20 @@ class HSBAnalyzer(BaseSubprocessAnalyzer):
         max_severity = 0
 
         for process in sections['detections']:
+            process_max = 0
             for finding in process['findings']:
-                severity = finding.get('severity', 'LOW')
+                severity = str(finding.get('severity') or 'LOW').upper()
+                if severity not in severity_counts:
+                    severity = 'LOW'
+                finding['severity'] = severity
                 severity_counts[severity] += 1
                 total_findings += 1
-
-                severity_score = self.SEVERITY_LEVELS.get(severity, 0)
-                if severity_score > max_severity:
-                    max_severity = severity_score
+                process_max = max(process_max, self.SEVERITY_LEVELS[severity])
 
             process['total_findings'] = len(process['findings'])
-            process['max_severity'] = max_severity
+            # Per process — the overall maximum goes in the summary.
+            process['max_severity'] = process_max
+            max_severity = max(max_severity, process_max)
 
             findings_by_thread = {}
             for finding in process['findings']:

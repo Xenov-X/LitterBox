@@ -23,17 +23,6 @@ export const UI = {
     }
 };
 
-export function getEventTypeColor(type) {
-    const colors = {
-        'Process Start': 'bg-green-400',
-        'Child Process': 'bg-yellow-400',
-        'DLL Load': 'bg-blue-400',
-        'Image Load': 'bg-purple-400',
-        'Thread Start': 'bg-pink-400'
-    };
-    return colors[type] || 'bg-gray-500';
-}
-
 export function renderSection(title, items) {
     if (!items || items.length === 0) return '';
 

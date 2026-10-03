@@ -4,25 +4,51 @@ from types import SimpleNamespace
 
 import yaml
 from colorama import Fore, Style, init
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 
 # Initialize colorama for Windows compatibility
 init(autoreset=True)
 
 
+# Repository root (the directory holding Config/, Scanners/, Utils/).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def load_config():
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.yaml')
+    config_path = os.path.join(REPO_ROOT, 'Config', 'config.yaml')
     with open(config_path, 'r') as config_file:
         return yaml.safe_load(config_file)
 
 
-def create_app():
+# Room for multipart boundaries / form fields on top of the file itself.
+_UPLOAD_OVERHEAD_BYTES = 1024 * 1024
+
+
+def create_app(config=None, start_background=True):
+    """Build the Flask app.
+
+    `config` overrides Config/config.yaml (tests). `start_background`
+    starts the EDR health poller; litterbox.py turns it off in the
+    Werkzeug reloader's parent process so only one poller runs.
+    """
     app = Flask(__name__)
 
     # Load configuration from YAML
-    config = load_config()
+    if config is None:
+        config = load_config()
     app.config.update(config)
     app.name = config['application']['name']
+
+    # Enforce the upload limit server-side (it used to be checked only by
+    # the upload page's JS) — Werkzeug rejects larger bodies with 413
+    # before they are read into memory.
+    max_file_size = config['utils'].get('max_file_size')
+    if max_file_size:
+        app.config['MAX_CONTENT_LENGTH'] = int(max_file_size) + _UPLOAD_OVERHEAD_BYTES
+
+    from .services.security import init_request_guards, register_converters
+    register_converters(app)
+    init_request_guards(app)
 
     # Create all necessary directories
     paths_to_create = {
@@ -61,8 +87,9 @@ def create_app():
 
     # Pre-warm the EDR-agent reachability cache so the dashboard never
     # waits for a fresh probe cycle. Idempotent — safe across reloads.
-    from .services.edr_health import start_poller
-    start_poller(app.extensions['litterbox'])
+    if start_background:
+        from .services.edr_health import start_poller
+        start_poller(app.extensions['litterbox'])
 
     # Register blueprints
     from .blueprints import (
@@ -81,10 +108,19 @@ def create_app():
     app.register_blueprint(management_bp)
     app.register_blueprint(api_bp)
 
+    from .services.error_handling import wants_json
+
     @app.errorhandler(404)
     def page_not_found(error):
         app.logger.debug(f"Page not found: {request.path}")
+        if wants_json():
+            return jsonify({'error': f"Not found: {request.path}"}), 404
         return render_template('error.html', error=f"Page not found: {request.path}"), 404
+
+    @app.errorhandler(413)
+    def payload_too_large(error):
+        limit_mb = int(max_file_size or 0) // (1024 * 1024)
+        return jsonify({'error': f'File too large (limit {limit_mb} MB)'}), 413
 
     return app
 
@@ -202,17 +238,22 @@ def setup_logging(app):
 
     Configuring at the root means every module logger created via
     `logging.getLogger(__name__)` (analyzers, services, edr clients,
-    blueprints) inherits the same format without per-module setup. Run
-    only in the Werkzeug reloader's child process to avoid duplicate
-    output when debug mode is on.
+    blueprints) inherits the same format without per-module setup. With
+    the debug reloader on, only its child process (the one serving
+    requests) configures logging, to avoid duplicate output. Without
+    the reloader there is a single process and it always configures —
+    previously INFO logs were dropped unless --debug was given.
+
+    `verbose` selects DEBUG-level output without enabling Flask debug mode.
     """
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    debug = bool(app.config.get('DEBUG'))
+    if debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
         return
 
-    debug = bool(app.config.get('DEBUG'))
-    level = logging.DEBUG if debug else logging.INFO
+    verbose = debug or bool(app.config.get('VERBOSE'))
+    level = logging.DEBUG if verbose else logging.INFO
 
-    if debug:
+    if verbose:
         formatter = _CompactFormatter()
     else:
         # Production output: timestamped, no ANSI, simple.
@@ -258,4 +299,4 @@ def setup_logging(app):
     if not any(isinstance(f, _WerkzeugAccessFilter) for f in werkzeug_logger.filters):
         werkzeug_logger.addFilter(_WerkzeugAccessFilter())
 
-    app.logger.debug('Logging configured (debug mode)')
+    app.logger.debug('Logging configured (verbose)')

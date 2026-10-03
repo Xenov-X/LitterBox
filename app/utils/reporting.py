@@ -5,7 +5,7 @@ import datetime as dt
 from flask import render_template
 
 from .json_helpers import extract_detection_counts, format_size
-from .risk_analyzer import calculate_risk, get_risk_level
+from .risk_analyzer import _calculate_byovd_risk, calculate_risk, get_risk_level
 
 
 # AV-killer trio — same set used by holygrail/core.js when highlighting
@@ -14,38 +14,16 @@ _AV_KILLER_IMPORTS = {'ZwTerminateProcess', 'ZwOpenProcess', 'PsLookupProcessByP
 
 
 def _calculate_byovd_score(byovd_results):
-    """Port of holygrail/core.js calculateScore() into Python.
+    """BYOVD score + label for the report hero card.
 
-    Returns (score, label) where score is 0-100 and label is one of
-    'High'/'Medium'/'Low'. Higher score = more exploitable BYOVD potential.
-    Returns (None, None) if there's no BYOVD payload to score.
+    Uses the same scorer as the results/summary pages
+    (risk_analyzer._calculate_byovd_risk) so the downloaded report can't
+    disagree with the UI. Returns (None, None) without BYOVD findings.
     """
     if not byovd_results or not byovd_results.get('findings'):
         return None, None
 
-    f = byovd_results['findings']
-    summary = f.get('summary', {}) or {}
-    detailed = f.get('detailed_analysis', {}) or {}
-
-    is_lol = bool(detailed.get('is_loldriver') or summary.get('is_loldriver'))
-    is_w10 = bool(detailed.get('is_win10_blocked') or summary.get('is_win10_blocked'))
-    is_w11 = bool(detailed.get('is_win11_blocked') or summary.get('is_win11_blocked'))
-    crit_imports_csv = detailed.get('critical_imports') or ''
-    has_danger = any(c.strip() for c in crit_imports_csv.split(','))
-
-    # If both Windows 10 and 11 block it, BYOVD potential is effectively zero.
-    if is_w11 and is_w10:
-        score = 0
-    else:
-        score = 0
-        if has_danger:    score += 55
-        if not is_w11:    score += 25
-        else:             score -= 50
-        if not is_w10:    score += 20
-        else:             score -= 20
-        if not is_lol:    score += 10
-        else:             score -= 5
-        score = max(0, min(100, score))
+    score, _factors = _calculate_byovd_risk(byovd_results)
 
     if score >= 70:
         label = 'High'
@@ -77,12 +55,14 @@ def generate_html_report(file_info=None, static_results=None,
     is_process_analysis = pid is not None and not file_info
     analysis_type = 'process' if is_process_analysis else 'file'
 
+    # EDR results are shown in their own section but, as on the results
+    # page and summary (helpers.calculate_and_add_risk), they don't feed
+    # the Detection Score — otherwise the report and UI disagree.
     risk_score, risk_factors = calculate_risk(
         analysis_type=analysis_type,
         file_info=file_info,
         static_results=static_results,
         dynamic_results=dynamic_results,
-        edr_results=edr_results,
     )
     risk_level = get_risk_level(risk_score)
 

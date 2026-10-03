@@ -8,14 +8,18 @@ each other.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import BinaryIO, Dict, List, Optional, Union
 
 import requests
 from requests.adapters import HTTPAdapter, Retry
-from urllib.parse import urljoin
 
 from .exceptions import LitterBoxAPIError, LitterBoxError
+
+_MD5_RE = re.compile(r'^[0-9a-fA-F]{32}$')
+_PID_RE = re.compile(r'^[0-9]+$')
+_PROFILE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 
 
 class _BaseClient:
@@ -49,8 +53,8 @@ class _BaseClient:
         retry_strategy = Retry(
             total=max_retries,
             backoff_factor=0.5,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"],
+            status_forcelist=[429, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
@@ -88,7 +92,9 @@ class _BaseClient:
         transport-level failures. Default timeout is the per-call
         `self.timeout`; callers can override with `timeout=` in kwargs.
         """
-        url = urljoin(self.base_url, endpoint)
+        if not endpoint.startswith('/'):
+            raise ValueError(f"endpoint must start with '/', got {endpoint!r}")
+        url = self.base_url + endpoint
         self.logger.debug(f"Making {method} request to {url}")
 
         try:
@@ -127,14 +133,30 @@ class _BaseClient:
         if not all(isinstance(arg, str) for arg in cmd_args):
             raise ValueError("All arguments must be strings")
 
-        # Block shell-meta characters that could enable command injection
-        # if a downstream consumer fails to quote them properly.
-        dangerous_chars = [";", "&", "|", "`", "$", "(", ")", "{", "}"]
-        for arg in cmd_args:
-            if any(char in arg for char in dangerous_chars):
-                raise ValueError(f"Dangerous character detected in argument: {arg}")
-
         return {"args": cmd_args}
+
+    @staticmethod
+    def _validate_target(target: str) -> str:
+        """Ensure `target` is an MD5 hash or a numeric PID."""
+        if _MD5_RE.match(target) or _PID_RE.match(target):
+            return target
+        raise ValueError(
+            f"target must be a 32-char hex MD5 hash or a numeric PID, got {target!r}"
+        )
+
+    @staticmethod
+    def _validate_hash(file_hash: str) -> str:
+        """Ensure `file_hash` is a 32-char hex MD5."""
+        if _MD5_RE.match(file_hash):
+            return file_hash
+        raise ValueError(f"file_hash must be a 32-char hex MD5, got {file_hash!r}")
+
+    @staticmethod
+    def _validate_profile(profile: str) -> str:
+        """Ensure `profile` is a safe EDR profile name."""
+        if _PROFILE_RE.match(profile):
+            return profile
+        raise ValueError(f"Invalid EDR profile name: {profile!r}")
 
     def _validate_analysis_type(self, analysis_type: str, valid_types: List[str]):
         """Validate analysis type with better error messages."""

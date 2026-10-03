@@ -317,9 +317,11 @@
       gap: 8px;
       font-size: 14px;
     }
+    .failed-state { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sev-medium); }
     .clean-state  { color: var(--sev-low); }
     .threat-state { color: var(--sev-critical); }
     .clean-state svg,
+    .failed-state svg,
     .threat-state svg {
       width: 14px;
       height: 14px;
@@ -859,7 +861,12 @@
         <div class="scanner-name">YARA</div>
         <div class="scanner-body">
           <div class="scanner-headline">
-            {% if yara and yara.matches %}
+            {% if yara and yara.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ yara.error or yara.reason or yara.status }}
+              </span>
+            {% elif yara and yara.matches %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 {{ yara.matches|length }} rule match{{ 'es' if yara.matches|length != 1 else '' }}
@@ -916,7 +923,12 @@
         <div class="scanner-name">CheckPLZ</div>
         <div class="scanner-body">
           <div class="scanner-headline">
-            {% if cp and cp.findings and cp.findings.initial_threat %}
+            {% if cp and cp.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ cp.error or cp.reason or cp.status }}
+              </span>
+            {% elif cp and cp.findings and cp.findings.initial_threat %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 Signature triggered
@@ -1028,7 +1040,12 @@
         <div class="scanner-name">YARA</div>
         <div class="scanner-body">
           <div class="scanner-headline">
-            {% if yara and yara.matches %}
+            {% if yara and yara.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ yara.error or yara.reason or yara.status }}
+              </span>
+            {% elif yara and yara.matches %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 {{ yara.matches|length }} rule match{{ 'es' if yara.matches|length != 1 else '' }}
@@ -1048,6 +1065,18 @@
                 </li>
               {% endfor %}
             </ul>
+            {% if yara.matches|length > 10 %}
+              <details class="report-more">
+                <summary>… and {{ yara.matches|length - 10 }} more (click to expand)</summary>
+                <ul class="finding-list">
+                  {% for m in yara.matches[10:] %}
+                    <li><span class="finding-rule">{{ m.rule }}</span>
+                      {% if m.metadata and m.metadata.severity is defined %}<span class="finding-meta">severity {{ m.metadata.severity }}</span>{% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
           {% endif %}
         </div>
       </div>
@@ -1059,7 +1088,12 @@
         <div class="scanner-body">
           {% set sus = (ps.findings.total_suspicious if ps and ps.findings else 0)|int %}
           <div class="scanner-headline">
-            {% if sus > 0 %}
+            {% if ps and ps.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ ps.error or ps.reason or ps.status }}
+              </span>
+            {% elif sus > 0 %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 {{ sus }} memory modification{{ 's' if sus != 1 else '' }}
@@ -1091,22 +1125,20 @@
       {# Moneta #}
       {% set mo = dynamic_results.moneta %}
       {% set mo_keys = [('Private RWX','total_private_rwx'),('Private RX','total_private_rx'),('Modified code','total_modified_code'),('Modified PE header','total_modified_pe_header'),('Heap exec','total_heap_executable'),('Inconsistent +X','total_inconsistent_x'),('Threads in non-image','total_threads_non_image'),('Unsigned modules','total_unsigned_modules'),('Missing PEB','total_missing_peb'),('Mismatching PEB','total_mismatching_peb')] %}
-      {% set mo_ns = namespace(total=0) %}
-      {% if mo and mo.findings %}
-        {% for label, key in mo_keys %}
-          {% if mo.findings[key] is defined and mo.findings[key]|int > 0 %}
-            {% set mo_ns.total = mo_ns.total + mo.findings[key]|int %}
-          {% endif %}
-        {% endfor %}
-      {% endif %}
+      {% set mo_total = (detections.moneta if detections else 0)|int %}
       <div class="scanner">
         <div class="scanner-name">Moneta</div>
         <div class="scanner-body">
           <div class="scanner-headline">
-            {% if mo_ns.total > 0 %}
+            {% if mo and mo.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ mo.error or mo.reason or mo.status }}
+              </span>
+            {% elif mo_total > 0 %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
-                {{ mo_ns.total }} memory anomal{{ 'ies' if mo_ns.total != 1 else 'y' }}
+                {{ mo_total }} memory anomal{{ 'ies' if mo_total != 1 else 'y' }}
               </span>
             {% else %}
               <span class="clean-state">
@@ -1140,7 +1172,12 @@
         <div class="scanner-body">
           {% set pa_findings = (pa.findings.findings if pa and pa.findings else []) or [] %}
           <div class="scanner-headline">
-            {% if pa_findings %}
+            {% if pa and pa.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ pa.error or pa.reason or pa.status }}
+              </span>
+            {% elif pa_findings %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 {{ pa_findings|length }} indicator{{ 's' if pa_findings|length != 1 else '' }}
@@ -1199,7 +1236,12 @@
         <div class="scanner-body">
           {% set hb_total = (hb.findings.summary.total_findings if hb and hb.findings and hb.findings.summary else 0)|int %}
           <div class="scanner-headline">
-            {% if hb_total > 0 %}
+            {% if hb and hb.status in ('error', 'timeout', 'skipped') %}
+              <span class="failed-state">
+                <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
+                Scan did not complete: {{ hb.error or hb.reason or hb.status }}
+              </span>
+            {% elif hb_total > 0 %}
               <span class="threat-state">
                 <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1l7 14H1L8 1zm0 5v4m0 2v.5"/></svg>
                 {{ hb_total }} sleeping-beacon finding{{ 's' if hb_total != 1 else '' }}
@@ -1229,9 +1271,10 @@
       {% set re_net = re_findings.network_activity if re_findings else [] %}
       {% set re_files = re_findings.file_operations if re_findings else [] %}
       {% set re_audit = re_findings.audit_api_calls if re_findings else [] %}
-      {% set threat_signals = ['threatfound','threatdetect','detectionadded','malwarefound','protectionalert','detected'] %}
+      {# Defender classification comes from RedEdrAnalyzer (_is_defender_threat):
+         `is_threat` / `category == 'threat'`. Don't re-derive it here. #}
       {% set ns = namespace(threat_hit=false) %}
-      {% for d in re_defender %}{% if d.verdict or d.event %}{% set evt = (d.event or '')|lower %}{% for s in threat_signals %}{% if s in evt %}{% set ns.threat_hit = true %}{% endif %}{% endfor %}{% if d.verdict %}{% set ns.threat_hit = true %}{% endif %}{% endif %}{% endfor %}
+      {% for d in re_defender %}{% if d.is_threat or d.category == 'threat' %}{% set ns.threat_hit = true %}{% endif %}{% endfor %}
 
       <div class="scanner">
         <div class="scanner-name">RedEdr</div>
@@ -1263,9 +1306,7 @@
               <thead><tr><th>Provider</th><th>Event</th><th>Scan Target</th><th>Verdict</th></tr></thead>
               <tbody>
                 {% for d in re_defender[:15] %}
-                  {% set evt = (d.event or '')|lower %}
-                  {% set is_threat = (d.verdict and (d.verdict|string)|trim) %}
-                  {% if not is_threat %}{% for s in threat_signals %}{% if s in evt %}{% set is_threat = true %}{% endif %}{% endfor %}{% endif %}
+                  {% set is_threat = d.is_threat or d.category == 'threat' %}
                   <tr>
                     <td class="mono">{{ d.provider or '—' }}</td>
                     <td class="mono">{{ d.event or '—' }}</td>
@@ -1282,9 +1323,7 @@
                   <thead><tr><th>Provider</th><th>Event</th><th>Scan Target</th><th>Verdict</th></tr></thead>
                   <tbody>
                     {% for d in re_defender[15:] %}
-                      {% set evt = (d.event or '')|lower %}
-                      {% set is_threat = (d.verdict and (d.verdict|string)|trim) %}
-                      {% if not is_threat %}{% for s in threat_signals %}{% if s in evt %}{% set is_threat = true %}{% endif %}{% endfor %}{% endif %}
+                      {% set is_threat = d.is_threat or d.category == 'threat' %}
                       <tr>
                         <td class="mono">{{ d.provider or '—' }}</td>
                         <td class="mono">{{ d.event or '—' }}</td>

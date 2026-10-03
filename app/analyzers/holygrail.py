@@ -6,6 +6,8 @@ import logging
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+from .process_utils import build_argv, run_tool
+
 class HolyGrailAnalyzer:
     def __init__(self, config: dict, logger: Optional[logging.Logger] = None):
         self.config = config
@@ -24,7 +26,7 @@ class HolyGrailAnalyzer:
 
         if not self.enabled:
             self.logger.debug("holygrail analyzer is disabled")
-            return {'status': 'error', 'error': 'holygrail disabled'}
+            return {'status': 'disabled', 'error': 'holygrail disabled'}
 
         if not os.path.exists(self.tool_path):
             self.logger.error(f"holygrail tool not found at: {self.tool_path}")
@@ -35,35 +37,32 @@ class HolyGrailAnalyzer:
             return {'status': 'error', 'error': f'File not found: {file_path}'}
 
         try:
-            command = self.command_template.format(
-                tool_path=self.tool_path,
-                file_path=file_path,
+            command = build_argv(
+                self.command_template,
+                tool_path=os.path.abspath(self.tool_path),
+                file_path=os.path.abspath(file_path),
                 policies_path=self.policies_path,
                 results_path=self.results_path,
             )
 
             self.logger.debug(f"Executing command: {command}")
 
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
+            # run_tool kills the process tree on timeout; subprocess.run with
+            # shell=True only killed cmd.exe and then waited on the pipes.
+            stdout, stderr, returncode = run_tool(command, timeout=self.timeout)
 
-            self.logger.debug(f"Command completed with return code: {result.returncode}")
+            self.logger.debug(f"Command completed with return code: {returncode}")
 
-            if result.returncode != 0:
-                self.logger.error(f"holygrail tool failed with code {result.returncode}")
-                self.logger.error(f"STDERR: {result.stderr}")
+            if returncode != 0:
+                self.logger.error(f"holygrail tool failed with code {returncode}")
+                self.logger.error(f"STDERR: {stderr}")
                 return {
                     'status': 'error',
-                    'error': f'Tool failed with code {result.returncode}',
-                    'stderr': result.stderr,
+                    'error': f'Tool failed with code {returncode}',
+                    'stderr': stderr,
                 }
 
-            json_data = self._extract_json(result.stdout)
+            json_data = self._extract_json(stdout)
 
             if json_data:
                 self.logger.debug("holygrail analysis completed successfully")
@@ -74,11 +73,11 @@ class HolyGrailAnalyzer:
                 }
 
             self.logger.error("No JSON found in holygrail output")
-            self.logger.debug(f"Raw output: {result.stdout}")
+            self.logger.debug(f"Raw output: {stdout}")
             return {
                 'status': 'error',
                 'error': 'No JSON found in output',
-                'raw_output': result.stdout,
+                'raw_output': stdout,
             }
 
         except subprocess.TimeoutExpired:

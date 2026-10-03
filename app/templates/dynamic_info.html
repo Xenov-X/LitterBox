@@ -14,7 +14,7 @@
     <div class="lb-panel-hdr">
         <span class="lb-glyph">▸</span>Dynamic Analysis Summary
         {% if file_info %}
-            <button onclick="window.location.href='/results/info/{{ file_info.md5 }}'" class="lb-btn lb-btn-ghost" style="margin-left: auto; padding: 2px 10px; font-size: 12px;" aria-label="Navigate back to file information">
+            <button data-href="/results/info/{{ file_info.md5|urlencode }}" class="lb-btn lb-btn-ghost" style="margin-left: auto; padding: 2px 10px; font-size: 12px;" aria-label="Navigate back to file information">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 19l-7-7 7-7"/></svg>
                 Back to File Info
             </button>
@@ -48,7 +48,7 @@
 <!-- Status grid -->
 {% set total_detections = yara_detections + pesieve_detections + moneta_detections + patriot_detections + hsb_detections %}
 {% set duration_value = "%.2f"|format(analysis_results.analysis_metadata.total_duration if analysis_results.analysis_metadata else 0) ~ "s" %}
-{{ status_grid_3(total_detections, 'Total Duration', duration_value) }}
+{{ status_grid_3(total_detections, 'Total Duration', duration_value, [analysis_results.yara, analysis_results.pe_sieve, analysis_results.moneta, analysis_results.patriot, analysis_results.hsb]) }}
 
 <!-- Scanner Results -->
 <div class="lb-panel">
@@ -56,12 +56,12 @@
     <table class="lb-table">
         {{ scanner_table_header() }}
         <tbody id="scannerResultsBody">
-            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches) }}
+            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches, analysis_results.yara) }}
 
             <!-- PE-sieve -->
             <tr>
                 <td>PE-sieve</td>
-                {{ scanner_status_cell(pesieve_detections) }}
+                {{ scanner_status_cell(pesieve_detections, analysis_results.pe_sieve) }}
                 {{ scanner_count_cell(pesieve_detections) }}
                 <td style="font-size: 12px; color: var(--lb-text-dim);">
                     {% if pesieve_detections %}
@@ -87,7 +87,7 @@
             <!-- Moneta -->
             <tr>
                 <td>Moneta</td>
-                {{ scanner_status_cell(moneta_detections) }}
+                {{ scanner_status_cell(moneta_detections, analysis_results.moneta) }}
                 {{ scanner_count_cell(moneta_detections) }}
                 <td style="font-size: 12px; color: var(--lb-text-dim);">
                     {% if moneta_detections %}
@@ -118,7 +118,7 @@
             <!-- Patriot -->
             <tr>
                 <td>Patriot</td>
-                {{ scanner_status_cell(patriot_detections) }}
+                {{ scanner_status_cell(patriot_detections, analysis_results.patriot) }}
                 {{ scanner_count_cell(patriot_detections) }}
                 <td style="font-size: 12px; color: var(--lb-text-dim);">
                     {% if patriot_detections %}
@@ -134,7 +134,7 @@
             <!-- HSB -->
             <tr>
                 <td>Hunt-SB</td>
-                {{ scanner_status_cell(hsb_detections) }}
+                {{ scanner_status_cell(hsb_detections, analysis_results.hsb) }}
                 {{ scanner_count_cell(hsb_detections) }}
                 <td style="font-size: 12px; color: var(--lb-text-dim);">
                     {% if hsb_detections %}

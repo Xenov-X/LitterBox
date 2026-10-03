@@ -1,11 +1,10 @@
 # app/blueprints/management.py
 """Cleanup, health-check, and per-file deletion endpoints."""
-import glob
 import os
 import shutil
 from datetime import datetime
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, current_app, jsonify, request
 
 from ..services.error_handling import error_handler
 from ..services.tool_check import (
@@ -25,20 +24,44 @@ def _deps():
 @management_bp.route('/cleanup', methods=['POST'])
 @error_handler
 def cleanup():
+    """Delete analysis artifacts.
+
+    Optional JSON body selects what to clean (each defaults to true, so a
+    body-less POST from the UI cleans everything):
+      cleanup_uploads   — uploaded samples
+      cleanup_results   — per-sample results + Blender host snapshots
+      cleanup_analysis  — PE-Sieve process dumps + HolyGrail output
+    """
     app = current_app
     deps = _deps()
     app.logger.debug("Starting cleanup process.")
 
-    folders_to_clean = {
-        'uploads': app.config['utils']['upload_folder'],
-        'results': app.config['utils']['result_folder'],
-    }
+    body = request.get_json(silent=True) if request.get_data(cache=True) else {}
+    if not isinstance(body, dict):
+        return jsonify({'error': 'Request body must be a JSON object'}), 400
+    flags = {}
+    for key in ('cleanup_uploads', 'cleanup_results', 'cleanup_analysis'):
+        value = body.get(key, True)
+        if not isinstance(value, bool):
+            return jsonify({'error': f'{key} must be true or false'}), 400
+        flags[key] = value
+    if not any(flags.values()):
+        return jsonify({'error': 'Nothing selected to clean'}), 400
+
+    folders_to_clean = {}
+    if flags['cleanup_uploads']:
+        folders_to_clean['uploads'] = app.config['utils']['upload_folder']
+    if flags['cleanup_results']:
+        folders_to_clean['results'] = app.config['utils']['result_folder']
 
     results = deps.helpers.process_file_cleanup(folders_to_clean)
+    results['cleaned'] = flags
 
     # Doppelganger sub-folders
     doppelganger_base = app.config['analysis']['doppelganger']['db']['path']
-    doppelganger_folders = [app.config['analysis']['doppelganger']['db']['blender']]
+    doppelganger_folders = (
+        [app.config['analysis']['doppelganger']['db']['blender']] if flags['cleanup_results'] else []
+    )
 
     for folder_name in doppelganger_folders:
         folder_path = os.path.join(doppelganger_base, folder_name)
@@ -58,7 +81,7 @@ def cleanup():
 
     # PE-Sieve analysis sub-folders
     analysis_path = os.path.join('.', 'Scanners', 'PE-Sieve', 'Analysis')
-    if os.path.exists(analysis_path):
+    if flags['cleanup_analysis'] and os.path.exists(analysis_path):
         try:
             results['analysis_cleaned'] += deps.helpers._clean_process_folders(analysis_path)
         except Exception as e:
@@ -67,7 +90,7 @@ def cleanup():
 
     # HolyGrail results
     holygrail_config = app.config.get('analysis', {}).get('holygrail', {})
-    if holygrail_config.get('enabled', False):
+    if flags['cleanup_analysis'] and holygrail_config.get('enabled', False):
         holygrail_results_path = holygrail_config.get('results_path')
         if holygrail_results_path and os.path.exists(holygrail_results_path):
             app.logger.debug(f"Cleaning HolyGrail results folder: {holygrail_results_path}")
@@ -165,16 +188,23 @@ def health_check():
     }), 200 if status == 'ok' else 503
 
 
-@management_bp.route('/file/<target>', methods=['DELETE'])
+@management_bp.route('/file/<target:target>', methods=['DELETE'])
 @error_handler
 def delete_file(target):
     app = current_app
     app.logger.debug(f"Deleting file: {target}")
-    upload_path = path_manager.find_file_by_hash(target, app.config['utils']['upload_folder'])
-    result_path = path_manager.find_file_by_hash(target, app.config['utils']['result_folder'])
-    analysis_path = os.path.join('.', 'Scanners', 'PE-Sieve', 'Analysis')
+    if target.isdigit():
+        # PID analyses live in Results/dynamic_<pid>; there is no upload.
+        upload_path = None
+        candidate = os.path.join(app.config['utils']['result_folder'], f'dynamic_{target}')
+        result_path = candidate if os.path.isdir(candidate) else None
+    else:
+        upload_path = path_manager.find_file_by_hash(target, app.config['utils']['upload_folder'])
+        result_path = path_manager.find_file_by_hash(target, app.config['utils']['result_folder'])
 
-    deleted = {'upload': False, 'result': False, 'analysis': False}
+    # PE-Sieve dumps are per process (process_<pid>), not per sample —
+    # they're removed by /cleanup, not here.
+    deleted = {'upload': False, 'result': False}
 
     if upload_path:
         try:
@@ -191,15 +221,6 @@ def delete_file(target):
             app.logger.debug(f"Deleted result folder: {result_path}")
         except Exception as e:
             app.logger.error(f"Error deleting result folder {result_path}: {e}")
-
-    process_folders = glob.glob(os.path.join(analysis_path, f'*_{target}_*'))
-    for folder in process_folders:
-        try:
-            shutil.rmtree(folder)
-            deleted['analysis'] = True
-            app.logger.debug(f"Deleted analysis folder: {folder}")
-        except Exception as e:
-            app.logger.error(f"Error deleting analysis folder {folder}: {e}")
 
     if not any(deleted.values()):
         app.logger.warning(f"File not found: {target}")

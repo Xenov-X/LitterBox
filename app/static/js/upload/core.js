@@ -11,6 +11,7 @@ import {
     getTargetCommandBorderClass,
     getTargetCommandTextClass,
 } from './lnk.js';
+import { escapeHtml } from '../utils/escape.js';
 
 // app/static/js/upload_updated.js
 
@@ -136,7 +137,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                     d="${type === 'success' ? 'M5 13l4 4L19 7' : 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'}"/>
             </svg>
-            <span>${message}</span>
+            <span>${escapeHtml(message)}</span>
         `;
 
         elements.toastContainer.appendChild(toast);
@@ -222,7 +223,7 @@ document.addEventListener('DOMContentLoaded', function() {
             input.placeholder = lc.default_args || '{sample}';
             if (hint) {
                 hint.innerHTML =
-                    `Launched via <span class="lb-mono lb-strong">${lc.command}</span>. ` +
+                    `Launched via <span class="lb-mono lb-strong">${escapeHtml(lc.command)}</span>. ` +
                     `Use <span class="lb-mono">{sample}</span> for the file path on the VM. ` +
                     `Leave blank for the default shown above.`;
             }
@@ -364,7 +365,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
                             d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                     </svg>
-                    <span>${note}</span>
+                    <span>${escapeHtml(note)}</span>
                 </div>
             `).join('');
         }
@@ -393,20 +394,20 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="border-b border-gray-800 last:border-b-0 pb-3">
                             <div class="flex items-center justify-between mb-2">
                                 <div class="flex items-center space-x-2">
-                                    <span class="${config.dllColor} font-mono">${imp.dll}</span>
+                                    <span class="${config.dllColor} font-mono">${escapeHtml(imp.dll)}</span>
                                     <span class="text-gray-400">→</span>
-                                    <span class="text-gray-300 font-mono">${imp.function}</span>
-                                    <span class="ml-2 px-2 py-0.5 text-xs ${config.categoryBg} ${config.categoryText} rounded-full">[${imp.category || 'Unknown'}]</span>
+                                    <span class="text-gray-300 font-mono">${escapeHtml(imp.function)}</span>
+                                    <span class="ml-2 px-2 py-0.5 text-xs ${config.categoryBg} ${config.categoryText} rounded-full">[${escapeHtml(imp.category || 'Unknown')}]</span>
                                     ${isRuntimeImport ? `<span class="ml-2 px-2 py-0.5 text-xs ${config.badgeBg} ${config.badgeText} rounded-full">${runtimeConfig.badgeLabel}</span>` : ''}
                                 </div>
-                                ${imp.hint !== null && imp.hint !== undefined ? `<span class="text-xs text-gray-500" title="Import hint: suggested index in DLL export table">Hint: ${imp.hint}</span>` : ''}
+                                ${imp.hint !== null && imp.hint !== undefined ? `<span class="text-xs text-gray-500" title="Import hint: suggested index in DLL export table">Hint: ${escapeHtml(imp.hint)}</span>` : ''}
                             </div>
                             <div class="flex items-center space-x-2">
                                 <svg class="w-4 h-4 ${config.iconColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
                                         d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                                 </svg>
-                                <span class="text-sm text-gray-400">${imp.note}</span>
+                                <span class="text-sm text-gray-400">${escapeHtml(imp.note)}</span>
                             </div>
                         </div>
                     `;
@@ -487,12 +488,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // The DOM container (#officeInfo) already exists in upload.html; this
     // function rewrites #macroDetectionNotes (status notes) and #macroInfo
     // (detail blocks) every time it runs.
-    function escapeHtml(s) {
-        return String(s ?? '').replace(/[&<>"']/g, c => (
-            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
-        ));
-    }
-
     function macroSeverityClass(office) {
         // Treat external attachedTemplate references and live macros as the
         // strong signals. Everything else goes "info".
@@ -809,21 +804,21 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="space-y-4">
                 <div class="flex items-center justify-between">
                     <h6 class="text-base font-medium text-gray-300">PE File Information</h6>
-                    <span class="text-sm text-gray-400">File Type: ${pe.file_type}</span>
-                    <span class="text-sm text-gray-400">Compile Time: ${pe.compile_time}</span>
+                    <span class="text-sm text-gray-400">File Type: ${escapeHtml(pe.file_type)}</span>
+                    <span class="text-sm text-gray-400">Compile Time: ${escapeHtml(pe.compile_time)}</span>
                 </div>
                 <div class="grid grid-cols-3 gap-4">
                     <div>
                         <div class="text-base text-gray-400 mb-1">Machine Type</div>
-                        <div class="text-base text-gray-300">${pe.machine_type}</div>
+                        <div class="text-base text-gray-300">${escapeHtml(pe.machine_type)}</div>
                     </div>
                     <div>
                         <div class="text-base text-gray-400 mb-1">Subsystem</div>
-                        <div class="text-base text-gray-300">${pe.subsystem}</div>
+                        <div class="text-base text-gray-300">${escapeHtml(pe.subsystem)}</div>
                     </div>
                     <div>
                         <div class="text-base text-gray-400 mb-1">Entry Point</div>
-                        <div class="text-base font-mono text-gray-300">${pe.entry_point}</div>
+                        <div class="text-base font-mono text-gray-300">${escapeHtml(pe.entry_point)}</div>
                     </div>
                 </div>
                 <div class="space-y-2">
@@ -836,7 +831,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             const isStandardSection = ['.text', '.data', '.bss', '.rdata', '.edata', '.idata', '.pdata', '.reloc', '.rsrc', '.tls', '.debug'].includes(section.name);
                             return `
                                 <span class="px-2 py-1 text-sm ${isStandardSection ? 'bg-gray-900/50 text-gray-400' : 'bg-red-500/8 text-red-300'} rounded-lg border ${isStandardSection ? 'border-gray-800' : 'border-red-500/22'}">
-                                    ${section.name}
+                                    ${escapeHtml(section.name)}
                                 </span>
                             `;
                         }).join('')}
@@ -851,7 +846,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="flex flex-wrap gap-2">
                             ${pe.imports.map(imp => `
                                 <span class="px-2 py-1 text-sm bg-gray-900/50 rounded-lg border border-gray-800 text-gray-400">
-                                    ${imp}
+                                    ${escapeHtml(imp)}
                                 </span>
                             `).join('')}
                         </div>
@@ -898,10 +893,11 @@ document.addEventListener('DOMContentLoaded', function() {
         elements.fileEntropy.textContent = fileInfo.entropy;
         elements.uploadTime.textContent = formatTimestamp(fileInfo.upload_time);
         elements.md5Hash.textContent = fileInfo.md5;
+        // copyHash() reads the full value from the hidden *HashFull span.
+        document.getElementById('md5HashFull').textContent = fileInfo.md5;
 
         elements.sha256Hash.textContent = `${fileInfo.sha256.substring(0, 32)}...`;
         document.getElementById('sha256HashFull').textContent = fileInfo.sha256;
-        localStorage.setItem('currentFileExtension', fileInfo.extension);
 
         // Update analysis options based on file type
         updateAnalysisOptions(fileInfo.extension);
@@ -983,10 +979,14 @@ document.addEventListener('DOMContentLoaded', function() {
     window.copyHash = function(elementId) {
         const hashType = elementId === 'md5Hash' ? 'md5' : 'sha256';
         const fullHash = document.getElementById(`${hashType}HashFull`).textContent;
+        if (!fullHash) {
+            showToast('No hash to copy yet', 'error');
+            return;
+        }
 
         navigator.clipboard.writeText(fullHash).then(() => {
             showToast(`${hashType.toUpperCase()} hash copied to clipboard`, 'success');
-        });
+        }).catch(() => showToast('Could not copy to clipboard', 'error'));
     }
 
     window.selectAnalysisType = function(type) {
@@ -1035,18 +1035,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 const argsInput = document.getElementById('allAnalysisArgs');
                 const argsValue = argsInput ? argsInput.value : '';
                 const args = argsValue.split(' ').filter(arg => arg.trim() !== '');
-                localStorage.setItem('analysisArgs', JSON.stringify(args));
-                window.location.href = `/analyze/all/${currentFileHash}`;
+                localStorage.setItem(`analysisArgs:${currentFileHash}`, JSON.stringify(args));
+                window.lbStartRun(`/analyze/all/${currentFileHash}`);
             } else if (type === 'dynamic') {
                 // Get user-specified arguments for dynamic analysis
                 const argsInput = document.getElementById('analysisArgs').value;
                 const args = argsInput.split(' ').filter(arg => arg.trim() !== '');
 
-                // Save arguments to localStorage
-                localStorage.setItem('analysisArgs', JSON.stringify(args));
+                // Save arguments for this sample
+                localStorage.setItem(`analysisArgs:${currentFileHash}`, JSON.stringify(args));
 
                 // Navigate to dynamic analysis
-                window.location.href = `/analyze/${type}/${currentFileHash}`;
+                window.lbStartRun(`/analyze/${type}/${currentFileHash}`);
             } else if (type.startsWith('edr:')) {
                 // EDR profile dispatch: type is "edr:<profile_name>".
                 // Each profile body has its own args input (id =
@@ -1056,11 +1056,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 const argsInput = document.getElementById(`edrArgs-${profile}`);
                 const argsValue = argsInput ? argsInput.value : '';
                 const args = argsValue.split(' ').filter(arg => arg.trim() !== '');
-                localStorage.setItem('analysisArgs', JSON.stringify(args));
-                window.location.href = `/analyze/edr/${encodeURIComponent(profile)}/${currentFileHash}`;
+                localStorage.setItem(`analysisArgs:${currentFileHash}`, JSON.stringify(args));
+                window.lbStartRun(`/analyze/edr/${encodeURIComponent(profile)}/${currentFileHash}`);
             } else {
                 // Navigate to static analysis
-                window.location.href = `/analyze/${type}/${currentFileHash}`;
+                window.lbStartRun(`/analyze/${type}/${currentFileHash}`);
             }
         }, UPLOAD_CONFIG.transitionDelay);
     };

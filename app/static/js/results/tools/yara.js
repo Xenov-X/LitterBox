@@ -1,5 +1,21 @@
 // app/static/js/results/tools/yara.js
-import { errorPanel, cleanState, statRow, panel, kvGrid, tag, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, statRow, panel, kvGrid, tag, escapeHtml, scanFailed, failurePanel } from './_shared.js';
+
+// YARA `severity` (from `score`/`severity` meta) is numeric (0-100) or a
+// word. Same buckets as RiskCalculator.severity_label on the server.
+const WORD_SCORES = { critical: 100, high: 80, medium: 50, low: 20, info: 5 };
+function severityScore(value) {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const n = parseInt(value, 10);
+        if (!Number.isNaN(n)) return n;
+        return WORD_SCORES[value.trim().toLowerCase()] ?? 50;
+    }
+    return 50;
+}
+function severityClass(score) {
+    return score >= 70 ? 'critical' : 'medium';
+}
 
 export default {
     id: 'yara',
@@ -7,8 +23,8 @@ export default {
     statsElementId: 'yaraStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 
@@ -16,13 +32,13 @@ export default {
         const matchCount = matches.length;
         const isClean = matchCount === 0;
         const totalStrings = matches.reduce((acc, m) => acc + (Array.isArray(m.strings) ? m.strings.length : 0), 0);
-        const highestSeverity = matches.length > 0 ? Math.max(...matches.map(m => parseInt(m.metadata?.severity || 0))) : 0;
+        const highestSeverity = matches.length > 0 ? Math.max(...matches.map(m => severityScore(m.metadata?.severity))) : 0;
 
         ctx.statsElement.innerHTML = statRow([
             { label: 'Rule Matches',  value: matchCount,    severity: isClean ? 'clean' : 'critical' },
             { label: 'Total Strings', value: totalStrings,  severity: 'info' },
             { label: 'Status',        value: isClean ? 'Clean' : `Sev ${highestSeverity}`,
-                                      severity: isClean ? 'clean' : (highestSeverity > 50 ? 'critical' : 'medium') },
+                                      severity: isClean ? 'clean' : severityClass(highestSeverity) },
         ]);
 
         let html = '';
@@ -41,7 +57,7 @@ export default {
         }
 
         const sortedMatches = [...matches].sort((a, b) =>
-            (parseInt(b.metadata?.severity) || 0) - (parseInt(a.metadata?.severity) || 0)
+            severityScore(b.metadata?.severity) - severityScore(a.metadata?.severity)
         );
 
         const labelMap = {
@@ -53,8 +69,8 @@ export default {
         const metaOrder = ['threat_name', 'rule_filepath', 'creation_date', 'id'];
 
         html += sortedMatches.map((match, i) => {
-            const severity = parseInt(match.metadata?.severity || 0);
-            const sev = severity > 50 ? 'critical' : 'medium';
+            const severity = severityScore(match.metadata?.severity);
+            const sev = severityClass(severity);
             const strings = Array.isArray(match.strings) ? match.strings : [];
 
             const metaPairs = metaOrder
@@ -84,6 +100,7 @@ export default {
                                             ${str.data_type ? `<span class="lb-tag muted">${escapeHtml(str.data_type)}</span>` : ''}
                                         </div>
                                         <pre class="lb-mono" style="background: var(--lb-bg); padding: 6px 8px; font-size: 12px; color: var(--lb-text-dim); white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow: auto; margin: 0;">${escapeHtml(str.data || '')}</pre>
+                                        ${str.definition ? `<div class="lb-muted lb-mono" style="font-size: 11px; margin-top: 4px; word-break: break-all;">Rule: ${escapeHtml(str.definition)}</div>` : ''}
                                     </div>
                                 `).join('')}
                             </div>

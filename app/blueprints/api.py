@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, Response, current_app, jsonify, redirect, request
 
 from ..services.error_handling import error_handler
-from ..utils import path_manager, reporting
+from ..utils import json_helpers, path_manager, reporting
 
 api_bp = Blueprint('api', __name__)
 
@@ -27,7 +27,7 @@ _RESULT_FILES = {
 
 
 @api_bp.route(
-    "/api/results/<any(info,static,dynamic,holygrail):result_type>/<target>",
+    "/api/results/<any(info,static,dynamic,holygrail):result_type>/<target:target>",
     methods=['GET'],
 )
 @error_handler
@@ -75,7 +75,7 @@ def api_edr_profiles():
     return jsonify({'profiles': deps.edr_registry.list_profiles()})
 
 
-@api_bp.route('/api/edr/fibratus/<profile>/alerts/since', methods=['GET'])
+@api_bp.route('/api/edr/fibratus/<profile:profile>/alerts/since', methods=['GET'])
 @error_handler
 def api_fibratus_alerts_passthrough(profile):
     """Test/debug passthrough — query the Whiskers agent's
@@ -133,7 +133,7 @@ def api_edr_agents_status():
     return jsonify(edr_health.get_status_snapshot(profiles, force_refresh=force))
 
 
-@api_bp.route('/api/results/edr/<profile>/<target>', methods=['GET'])
+@api_bp.route('/api/results/edr/<profile:profile>/<target:target>', methods=['GET'])
 @error_handler
 def api_edr_results(target, profile):
     """Read the saved findings for a specific EDR profile run on `target`."""
@@ -147,11 +147,13 @@ def api_edr_results(target, profile):
     if not os.path.exists(edr_path):
         return jsonify({'error': f'EDR results for profile {profile!r} not found'}), 404
 
-    with open(edr_path, 'r') as f:
-        return jsonify(json.load(f))
+    findings = json_helpers.load_json_file(edr_path)
+    if findings is None:
+        return jsonify({'error': 'EDR results could not be read'}), 500
+    return jsonify(json_helpers.cap_saved_stdio(findings))
 
 
-@api_bp.route('/api/results/edr/<target>', methods=['GET'])
+@api_bp.route('/api/results/edr/<target:target>', methods=['GET'])
 @error_handler
 def api_edr_index(target):
     """List which EDR profiles have saved results for `target`."""
@@ -168,7 +170,7 @@ def api_edr_index(target):
     return jsonify({'profiles': sorted(profiles)})
 
 
-@api_bp.route('/api/results/risk/<target>', methods=['GET'])
+@api_bp.route('/api/results/risk/<target:target>', methods=['GET'])
 @error_handler
 def api_risk_assessment(target):
     """Return the computed detection assessment (score, level, triggering indicators) for a target."""
@@ -192,7 +194,7 @@ def api_risk_assessment(target):
     })
 
 
-@api_bp.route('/api/report/<target>', methods=['GET'])
+@api_bp.route('/api/report/<target:target>', methods=['GET'])
 @error_handler
 def generate_report(target):
     app = current_app
@@ -234,7 +236,7 @@ def generate_report(target):
     return html_report
 
 
-@api_bp.route('/report/<target>', methods=['GET'])
+@api_bp.route('/report/<target:target>', methods=['GET'])
 @error_handler
 def report_page(target):
     """Convenience alias — redirects to the download form of /api/report/<target>.

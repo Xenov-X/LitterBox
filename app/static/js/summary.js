@@ -496,6 +496,13 @@ function showDriverDeleteWarning(md5) {
     modal?.classList.remove('hidden');
 }
 
+function showProcessDeleteWarning(pid) {
+    const modal = document.getElementById('fileDeleteWarningModal');
+    const confirmButton = document.getElementById('confirmDeleteButton');
+    confirmButton.onclick = () => deleteProcess(pid);
+    modal?.classList.remove('hidden');
+}
+
 function hideFileDeleteWarning() {
     const modal = document.getElementById('fileDeleteWarningModal');
     modal?.classList.add('hidden');
@@ -533,9 +540,12 @@ async function deleteDriver(md5) {
 
 async function deleteProcess(pid) {
     try {
-        const response = await fetch(`/process/${pid}`, { method: 'DELETE' });
+        // PID results live under Results/dynamic_<pid>; DELETE /file/<pid>
+        // removes them (there is no upload to delete).
+        const response = await fetch(`/file/${encodeURIComponent(pid)}`, { method: 'DELETE' });
         if (response.ok) {
-            processes = processes.filter(process => process.pid !== pid);
+            hideFileDeleteWarning();
+            processes = processes.filter(process => String(process.pid) !== String(pid));
             updateProcessStats();
             renderProcesses();
         }

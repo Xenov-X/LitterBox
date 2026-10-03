@@ -454,7 +454,6 @@ a:hover { color: var(--lb-accent); }
 
 /* Inline status icons used in detail text */
 .lb-ok::before    { content: '✓'; color: var(--lb-sev-low);    margin-right: 6px; }
-.lb-alert::before { content: '!'; color: var(--lb-accent);     margin-right: 6px; }
 
 /* ============================================================
  * Hash / monospace value display
@@ -489,8 +488,7 @@ a:hover { color: var(--lb-accent); }
  * Forms
  * ============================================================ */
 .lb-input,
-.lb-select,
-.lb-textarea {
+.lb-select {
     width: 100%;
     padding: 6px 10px;
     font-family: inherit;
@@ -505,12 +503,10 @@ a:hover { color: var(--lb-accent); }
     appearance: none;
 }
 .lb-input:focus,
-.lb-select:focus,
-.lb-textarea:focus {
+.lb-select:focus {
     border-color: rgba(255, 255, 255, 0.3);
 }
-.lb-input::placeholder,
-.lb-textarea::placeholder { color: var(--lb-text-mute); }
+.lb-input::placeholder { color: var(--lb-text-mute); }
 
 .lb-select {
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2371717a' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
@@ -659,7 +655,6 @@ input:-webkit-autofill:active {
     .lb-grid-2, .lb-grid-3 { grid-template-columns: 1fr; }
 }
 
-.lb-hidden,
 .hidden { display: none !important; }
 
 /* ============================================================

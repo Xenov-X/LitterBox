@@ -23,6 +23,8 @@ import logging
 import os
 from typing import Dict, Optional
 
+from ..utils.json_helpers import write_json_atomic
+
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +44,23 @@ _EDR_SUFFIX = '_results.json'
 
 CACHE_FILE = '_summary_cache.json'
 
+# Bump whenever the summary shape or the risk scoring changes, so entries
+# computed by older code are recomputed instead of served forever.
+CACHE_VERSION = 2
 
-def get_cached(item_path: str) -> Optional[dict]:
-    """Return a cached summary for `item_path` if its source mtimes
-    match the current on-disk state. None on miss / staleness /
-    corrupted cache."""
+
+def snapshot(item_path: str) -> Dict[str, int]:
+    """Source mtimes to validate against. Take this BEFORE reading the
+    sources and pass the same snapshot to get_cached() and store():
+    stamping mtimes taken after the reads could label a summary built
+    from older data as current."""
+    return _source_mtimes(item_path)
+
+
+def get_cached(item_path: str, sources: Optional[Dict[str, int]] = None) -> Optional[dict]:
+    """Return a cached summary for `item_path` if it was built by this
+    cache version from sources with exactly these mtimes. None on miss /
+    staleness / corrupted cache."""
     cache_path = os.path.join(item_path, CACHE_FILE)
     if not os.path.exists(cache_path):
         return None
@@ -57,30 +71,28 @@ def get_cached(item_path: str) -> Optional[dict]:
         logger.debug(f"Summary cache read failed for {item_path}: {exc}")
         return None
 
-    saved_sources = cached.get('_sources') or {}
-    if saved_sources != _source_mtimes(item_path):
+    if cached.get('_version') != CACHE_VERSION:
+        return None
+    if sources is None:
+        sources = _source_mtimes(item_path)
+    if (cached.get('_sources') or {}) != sources:
         return None
 
     return cached.get('summary')
 
 
-def store(item_path: str, summary: dict) -> None:
-    """Persist `summary` for `item_path` along with the current source
-    mtimes. Failures are logged but not raised — the cache is purely
-    a perf optimization and a missing entry just falls through to the
-    slow path on the next read."""
+def store(item_path: str, summary: dict, sources: Optional[Dict[str, int]] = None) -> None:
+    """Persist `summary` for `item_path`, stamped with `sources` (the
+    snapshot taken before the summary's inputs were read). Failures are
+    logged but not raised — the cache is purely a perf optimization."""
     cache_path = os.path.join(item_path, CACHE_FILE)
     payload = {
-        '_sources': _source_mtimes(item_path),
+        '_version': CACHE_VERSION,
+        '_sources': sources if sources is not None else _source_mtimes(item_path),
         'summary': summary,
     }
     try:
-        # Write to a sibling .tmp then rename so a crash mid-write
-        # never leaves a half-formed cache file behind.
-        tmp = cache_path + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(payload, f)
-        os.replace(tmp, cache_path)
+        write_json_atomic(cache_path, payload)
     except OSError as exc:
         logger.debug(f"Summary cache write failed for {item_path}: {exc}")
 

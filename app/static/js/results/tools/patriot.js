@@ -1,5 +1,5 @@
 // app/static/js/results/tools/patriot.js
-import { errorPanel, cleanState, statRow, panel, kvGrid, tag, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, statRow, panel, kvGrid, tag, escapeHtml, scanFailed, failurePanel } from './_shared.js';
 
 export default {
     id: 'patriot',
@@ -7,8 +7,8 @@ export default {
     statsElementId: 'patriotStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 

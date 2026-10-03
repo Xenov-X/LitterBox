@@ -1,5 +1,5 @@
 // app/static/js/results/tools/hsb.js
-import { errorPanel, cleanState, statRow, kvGrid, tag, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, statRow, kvGrid, tag, escapeHtml, scanFailed, failurePanel } from './_shared.js';
 
 const SEV_TO_TAG = {
     CRITICAL: 'critical',
@@ -14,8 +14,8 @@ export default {
     statsElementId: 'hsbStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 
@@ -55,7 +55,7 @@ export default {
         html += Object.entries(findingsByThread).map(([tid, items]) => `
             <div class="lb-panel">
                 <div class="lb-panel-hdr">
-                    <span class="lb-glyph">▸</span>${tid === 'process' ? 'Process-wide Indicators' : `Thread ${tid}`}
+                    <span class="lb-glyph">▸</span>${tid === 'process' ? 'Process-wide Indicators' : `Thread ${escapeHtml(String(tid))}`}
                     <span class="lb-panel-badge">${items.length}</span>
                 </div>
                 <div class="lb-panel-body">

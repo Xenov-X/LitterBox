@@ -1,13 +1,13 @@
 // app/static/js/results/tools/pe_sieve.js
-import { errorPanel, cleanState, statRow, panel, codeBlock, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, statRow, panel, codeBlock, escapeHtml, scanFailed, failurePanel } from './_shared.js';
 
 export default {
     id: 'pe_sieve',
     elementId: 'peSieveResults',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 

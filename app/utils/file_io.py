@@ -12,7 +12,6 @@ in its own module:
 """
 import datetime
 import hashlib
-import json
 import mimetypes
 import os
 import pathlib
@@ -23,6 +22,7 @@ from werkzeug.utils import secure_filename
 
 from .forensics import calculate_entropy, get_security_analyzer
 from .htmlsmuggle import get_html_smuggle_info
+from .json_helpers import write_json_atomic
 from .lnk import get_lnk_info
 from .office import get_office_info
 from .risk_analyzer import RiskCalculator
@@ -489,7 +489,6 @@ def save_uploaded_file(file, config, *, allow_live_edr=False):
         # for clean files (just with is_smuggling=false / score=0).
         file_info.update(get_html_smuggle_info(filepath))
 
-    with open(os.path.join(result_folder, filename, 'file_info.json'), 'w') as f:
-        json.dump(file_info, f)
+    write_json_atomic(os.path.join(result_folder, filename, 'file_info.json'), file_info)
 
     return file_info

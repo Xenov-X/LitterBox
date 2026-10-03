@@ -120,17 +120,14 @@ class RedEdrAnalyzer(DynamicAnalyzer):
             # stop request) so callers never hang waiting on a dead process.
             self._ready_event.set()
 
-    def wait_for_ready(self):
-        """Block until RedEdr signals ETW-providers-attached, or until the
-        reader thread exits (process died / pipe closed / stop requested).
-
-        No timeout — RedEdr's normal startup is bounded by ETW provider
-        attachment (typically 1-3s) and any failure surfaces as a quick exit
-        which trips the EOF path in the reader thread.
+    def wait_for_ready(self, timeout=None):
+        """Block until RedEdr signals ETW-providers-attached, the reader
+        thread exits (process died / pipe closed / stop requested), or
+        `timeout` seconds pass. Returns False only on timeout.
 
         Use `is_ready()` after returning to distinguish real readiness from
         a dead-process unblock."""
-        self._ready_event.wait()
+        return self._ready_event.wait(timeout)
 
     def is_ready(self):
         """True only if the readiness marker was actually seen on stdout."""

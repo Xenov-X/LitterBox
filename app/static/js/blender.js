@@ -1,5 +1,7 @@
 // app/static/js/blender.js
 
+import { escapeHtml as esc } from './utils/escape.js';
+
 class BlenderAnalyzer {
     constructor() {
         // Only initialize if we're in blender mode
@@ -195,12 +197,12 @@ class BlenderAnalyzer {
     generateProcessTableBody(processes) {
         const rows = processes.map((process, index) => {
             const rowClass = index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800/50';
-            const rowId = `process-${process.pid}`;
+            const rowId = `process-${esc(process.pid)}`;
             
             return `
                 <tr class="${rowClass} hover:bg-gray-700/50 transition-colors cursor-pointer" 
                     onclick="blenderAnalyzer.toggleProcessDetails('${rowId}')" 
-                    data-pid="${process.pid}">
+                    data-pid="${esc(process.pid)}">
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-200">
                         <div class="flex items-center gap-2">
                             <svg class="w-4 h-4 transform transition-transform" id="arrow-${rowId}" 
@@ -208,11 +210,11 @@ class BlenderAnalyzer {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
                                       d="M9 5l7 7-7 7"/>
                             </svg>
-                            ${process.process_name}
+                            ${esc(process.process_name)}
                         </div>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
-                        ${process.pid}
+                        ${esc(process.pid)}
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                         ${process.iocs.length} findings
@@ -265,15 +267,15 @@ class BlenderAnalyzer {
             <div class="border-l-2 border-yellow-300 pl-4 py-2">
                 <div class="flex flex-col gap-1">
                     <div class="flex items-center gap-2">
-                        <span class="text-yellow-300 font-medium">${ioc.type}</span>
-                        ${ioc.severity ? `<span class="text-xs text-gray-500">[${ioc.severity}]</span>` : ''}
+                        <span class="text-yellow-300 font-medium">${esc(ioc.type)}</span>
+                        ${ioc.severity ? `<span class="text-xs text-gray-500">[${esc(ioc.severity)}]</span>` : ''}
                     </div>
                     <div class="text-gray-400 text-sm">
-                        ${ioc.description}
+                        ${esc(ioc.description)}
                     </div>
                     ${ioc.thread_info ? `
                         <div class="text-gray-500 text-xs">
-                            ${ioc.thread_info}
+                            ${esc(ioc.thread_info)}
                         </div>
                     ` : ''}
                 </div>
@@ -286,11 +288,11 @@ class BlenderAnalyzer {
             <div class="border-l-2 border-blue-300 pl-4 py-2">
                 <div class="flex flex-col gap-1">
                     <div class="flex items-center gap-2">
-                        <span class="text-blue-300 font-medium">${ioc.type}</span>
-                        <span class="text-xs text-gray-500">[${ioc.severity}]</span>
+                        <span class="text-blue-300 font-medium">${esc(ioc.type)}</span>
+                        <span class="text-xs text-gray-500">[${esc(ioc.severity)}]</span>
                     </div>
                     <div class="text-gray-400 text-sm">
-                        ${ioc.description}
+                        ${esc(ioc.description)}
                     </div>
                 </div>
             </div>
@@ -305,19 +307,19 @@ class BlenderAnalyzer {
             <div class="border-l-2 border-pink-300 pl-4 py-2">
                 <div class="flex flex-col gap-1">
                     <div class="flex items-center gap-2">
-                        <span class="text-pink-300 font-medium">${ioc.type}</span>
+                        <span class="text-pink-300 font-medium">${esc(ioc.type)}</span>
                     </div>
                     <div class="grid grid-cols-2 gap-4 text-sm">
                         <div class="text-gray-400">
-                            <span class="text-gray-500">Address:</span> ${address}
+                            <span class="text-gray-500">Address:</span> ${esc(address)}
                         </div>
                         <div class="text-gray-400">
-                            <span class="text-gray-500">Size:</span> ${size}
+                            <span class="text-gray-500">Size:</span> ${esc(size)}
                         </div>
                     </div>
                     ${parts.slice(1).map(part => `
                         <div class="text-gray-400 text-sm">
-                            ${part}
+                            ${esc(part)}
                         </div>
                     `).join('')}
                 </div>
@@ -330,10 +332,10 @@ class BlenderAnalyzer {
             <div class="border-l-2 border-pink-300 pl-4 py-2">
                 <div class="flex flex-col gap-1">
                     <div class="flex items-center gap-2">
-                        <span class="text-pink-300 font-medium">${ioc.type}</span>
+                        <span class="text-pink-300 font-medium">${esc(ioc.type)}</span>
                     </div>
                     <div class="text-gray-400 text-sm">
-                        ${ioc.description}
+                        ${esc(ioc.description)}
                     </div>
                 </div>
             </div>
@@ -419,8 +421,8 @@ class BlenderAnalyzer {
             <tr class="${index % 2 === 0 ? 'bg-gray-900/30' : 'bg-gray-800/30'}">
                 <td class="px-6 py-4">
                     <div class="flex flex-col">
-                        <span class="text-gray-200">${file.filename}</span>
-                        <span class="text-sm text-gray-500 font-mono">${file.md5}</span>
+                        <span class="text-gray-200">${esc(file.filename)}</span>
+                        <span class="text-sm text-gray-500 font-mono">${esc(file.md5)}</span>
                     </div>
                 </td>
                 <td class="px-6 py-4 text-sm text-gray-400">
@@ -430,15 +432,15 @@ class BlenderAnalyzer {
                                 <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                                 </svg>
-                                <span>${factor}</span>
+                                <span>${esc(factor)}</span>
                             </div>
                         `).join('')}
                     </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${file.upload_time}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${esc(file.upload_time)}</td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <button 
-                        ${hasSystemScan ? `onclick="blenderAnalyzer.compareWithPayload('${file.md5}')"` : 'disabled'} 
+                        ${hasSystemScan ? `data-md5="${esc(file.md5)}" onclick="blenderAnalyzer.compareWithPayload(this.dataset.md5)"` : 'disabled'} 
                         class="px-3 py-1 ${hasSystemScan ? 'text-red-400 border-red-900/20 hover:bg-red-500/10 cursor-pointer' : 'text-gray-500 border-gray-700 opacity-50 cursor-not-allowed'} border rounded-lg transition-colors"
                         ${!hasSystemScan ? 'title="Please run a system scan first"' : ''}>
                         Compare
@@ -487,7 +489,7 @@ class BlenderAnalyzer {
             <div class="space-y-6">
                 <div class="bg-gray-800/50 p-4 rounded-lg">
                     <h3 class="text-lg font-medium text-gray-200">Payload Analysis</h3>
-                    <div class="text-sm text-gray-400 mb-4">Hash: ${hash}</div>
+                    <div class="text-sm text-gray-400 mb-4">Hash: ${esc(hash)}</div>
                     ${this.formatPayloadIOCs(payloadIOCs)}
                 </div>
 
@@ -507,11 +509,11 @@ class BlenderAnalyzer {
                 <div class="flex items-center justify-between mb-4">
                     <div class="flex items-center gap-4">
                         <span class="text-2xl font-bold ${this.getMatchPercentageColor(match.match_percentage)}">
-                            ${match.match_percentage}%
+                            ${esc(match.match_percentage)}%
                         </span>
                         <div>
-                            <h4 class="text-lg font-medium text-gray-200">${match.process_name}</h4>
-                            <div class="text-sm text-gray-400">PID: ${match.pid}</div>
+                            <h4 class="text-lg font-medium text-gray-200">${esc(match.process_name)}</h4>
+                            <div class="text-sm text-gray-400">PID: ${esc(match.pid)}</div>
                         </div>
                     </div>
                 </div>
@@ -540,7 +542,7 @@ class BlenderAnalyzer {
     formatIOCCategory(category, iocs) {
         return `
             <div class="mb-4">
-                <h4 class="text-sm font-medium text-gray-300 mb-2">${category}</h4>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">${esc(category)}</h4>
                 <div class="space-y-2">
                     ${iocs.map(ioc => this.formatCategoryIOC(ioc)).join('')}
                 </div>
@@ -553,11 +555,11 @@ class BlenderAnalyzer {
             <div class="bg-gray-800/30 rounded p-3">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="text-sm font-medium ${this.getIOCSeverityColor(ioc.severity)}">
-                        ${ioc.type}
+                        ${esc(ioc.type)}
                     </span>
                     ${ioc.severity ? 
                         `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-400">
-                            ${ioc.severity}
+                            ${esc(ioc.severity)}
                         </span>` 
                         : ''
                     }
@@ -587,7 +589,7 @@ class BlenderAnalyzer {
     formatMatchedIOCCategory(category, matchingIOCs, payloadIOCs) {
         return `
             <div class="mb-6">
-                <h4 class="text-sm font-medium text-gray-300 mb-2">${category}</h4>
+                <h4 class="text-sm font-medium text-gray-300 mb-2">${esc(category)}</h4>
                 <div class="grid grid-cols-2 gap-4">
                     ${this.formatIOCComparison(matchingIOCs, payloadIOCs)}
                 </div>
@@ -617,10 +619,10 @@ class BlenderAnalyzer {
         return `
             <div class="bg-gray-800/30 rounded p-3">
                 <div class="flex items-center gap-2 mb-1">
-                    <span class="text-sm font-medium ${this.getIOCSeverityColor(ioc.severity)}">${ioc.type}</span>
+                    <span class="text-sm font-medium ${this.getIOCSeverityColor(ioc.severity)}">${esc(ioc.type)}</span>
                     ${ioc.severity ? 
                         `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-400">
-                            ${ioc.severity}
+                            ${esc(ioc.severity)}
                         </span>` 
                         : ''
                     }
@@ -642,10 +644,10 @@ class BlenderAnalyzer {
         return `
             <div class="bg-gray-800/30 rounded p-3">
                 <div class="flex items-center gap-2 mb-1">
-                    <span class="text-sm font-medium ${this.getIOCSeverityColor(ioc.severity)}">${ioc.type}</span>
+                    <span class="text-sm font-medium ${this.getIOCSeverityColor(ioc.severity)}">${esc(ioc.type)}</span>
                     ${ioc.severity ? 
                         `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-400">
-                            ${ioc.severity}
+                            ${esc(ioc.severity)}
                         </span>` 
                         : ''
                     }
@@ -695,7 +697,7 @@ class BlenderAnalyzer {
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <span>${message}</span>
+                <span>${esc(message)}</span>
             </div>
         `;
     }
@@ -708,7 +710,7 @@ class BlenderAnalyzer {
                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
-                <span>${message}</span>
+                <span>${esc(message)}</span>
             </div>
         `;
     }

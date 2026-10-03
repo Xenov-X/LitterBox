@@ -25,7 +25,10 @@ class StatusManager {
         }
         window._statusManagerInstance = this;
 
-        this.hasCheckedStatus = sessionStorage.getItem('statusChecked') === 'true';
+        // Last /health result, reused across page loads for a short time
+        // (it used to be a boolean "checked" flag set before the check
+        // finished, so every later page claimed "Active" regardless).
+        this.cached = StatusManager.readCache();
 
         this.elements = {
             indicator: document.getElementById('status-indicator'),
@@ -40,33 +43,53 @@ class StatusManager {
             currentIssues: [],
         };
 
-        if (this.hasCheckedStatus) {
-            this.setActiveState();
+        if (this.cached) {
+            this.applyStatus(this.cached.status, this.cached.issues);
         }
 
         this.handleClickOutside = this.handleClickOutside.bind(this);
     }
 
+    static CACHE_KEY = 'lb.health';
+    static CACHE_TTL_MS = 60000;
+
+    static readCache() {
+        try {
+            const cached = JSON.parse(sessionStorage.getItem(StatusManager.CACHE_KEY) || 'null');
+            if (cached && Date.now() - cached.ts < StatusManager.CACHE_TTL_MS) return cached;
+        } catch { /* ignore */ }
+        return null;
+    }
+
+    static writeCache(status, issues) {
+        try {
+            sessionStorage.setItem(StatusManager.CACHE_KEY, JSON.stringify({ status, issues, ts: Date.now() }));
+        } catch { /* ignore */ }
+    }
+
     init() {
-        if (!this.hasCheckedStatus) {
+        if (!this.cached) {
             this.checkStatus();
-            sessionStorage.setItem('statusChecked', 'true');
-            this.hasCheckedStatus = true;
         }
         document.addEventListener('click', this.handleClickOutside);
+    }
+
+    applyStatus(status, issues) {
+        if (status === 'ok') {
+            this.setActiveState();
+        } else {
+            this.setDegradedState(issues || []);
+        }
     }
 
     async checkStatus() {
         try {
             const response = await fetch('/health');
             const data = await response.json();
-
-            if (data.status === 'ok') {
-                this.setActiveState();
-            } else {
-                this.setDegradedState(data.issues || []);
-            }
+            this.applyStatus(data.status, data.issues);
+            StatusManager.writeCache(data.status, data.issues || []);
         } catch (error) {
+            try { sessionStorage.removeItem(StatusManager.CACHE_KEY); } catch { /* ignore */ }
             this.handleError(error);
         }
     }
@@ -293,7 +316,7 @@ const ProcessManager = {
 
             ModalManager.hideProcessWarning();
             NotificationSystem.show(`Starting analysis of process ${pid}…`, 'success');
-            window.location.href = `/analyze/dynamic/${pid}`;
+            window.lbStartRun(`/analyze/dynamic/${encodeURIComponent(pid)}`);
         } catch (error) {
             console.error('Process analysis error:', error);
             NotificationSystem.show(error.message, 'error');

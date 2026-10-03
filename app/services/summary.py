@@ -12,7 +12,8 @@ def process_pid_summary(item, item_path, pid_based_summary, logger):
     # Cache hit short-circuits the multi-MB JSON parse + risk recompute.
     # The cache validates against source mtimes on read, so a stale
     # entry is impossible — no manual invalidation needed at save sites.
-    cached = summary_cache.get_cached(item_path)
+    sources = summary_cache.snapshot(item_path)
+    cached = summary_cache.get_cached(item_path, sources)
     if cached is not None:
         pid_based_summary[pid] = cached
         return
@@ -78,7 +79,7 @@ def process_pid_summary(item, item_path, pid_based_summary, logger):
             },
         }
         pid_based_summary[pid] = result
-        summary_cache.store(item_path, result)
+        summary_cache.store(item_path, result, sources)
         logger.debug(f"Processed dynamic analysis for PID: {pid}")
     except Exception as e:
         logger.error(f"Error processing PID {pid}: {e}")
@@ -92,7 +93,8 @@ def process_file_summary(item, item_path, file_based_summary, logger):
 
     # Cache hit short-circuits the per-sample 4-6 disk reads + risk
     # recompute. Validated against source mtimes on read.
-    cached = summary_cache.get_cached(item_path)
+    sources = summary_cache.snapshot(item_path)
+    cached = summary_cache.get_cached(item_path, sources)
     if cached is not None:
         file_based_summary[item] = cached
         return
@@ -205,7 +207,7 @@ def process_file_summary(item, item_path, file_based_summary, logger):
         file_based_summary[item] = result
         # Persist for the next dashboard load — saves the 4-6 disk
         # reads + risk recompute we just paid for.
-        summary_cache.store(item_path, result)
+        summary_cache.store(item_path, result, sources)
         logger.debug(f"Processed file-based analysis for item: {item}")
     except Exception as e:
         logger.error(f"Error processing file item {item}: {e}")

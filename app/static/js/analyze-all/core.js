@@ -18,11 +18,12 @@ const LIVE_EDR = new Set(cfg.liveEdrProfiles);
 const PAGE_START = Date.now();
 const POST_HEADERS = { 'Content-Type': 'application/json' };
 
-// Args carried over from the upload page (shared between dynamic + EDR runs).
+// Args carried over from the upload page (shared between dynamic + EDR runs),
+// saved per sample so another sample's args are never reused.
 function loadArgs() {
     try {
-        const raw = localStorage.getItem('analysisArgs');
-        return raw ? JSON.parse(raw) : [];
+        const saved = JSON.parse(localStorage.getItem(`analysisArgs:${cfg.fileHash}`) || '[]');
+        return Array.isArray(saved) ? saved : [];
     } catch {
         return [];
     }
@@ -121,11 +122,13 @@ function fmtElapsed(ms) {
     const s = Math.floor(ms / 1000);
     return `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 }
-let overallTimer = setInterval(() => {
-    const text = fmtElapsed(Date.now() - PAGE_START);
+let runStart = PAGE_START;
+function updateOverallTimer() {
+    const text = fmtElapsed(Date.now() - runStart);
     if (overallEl)     overallEl.textContent = text;
     if (elapsedTileEl) elapsedTileEl.textContent = text;
-}, 1000);
+}
+let overallTimer = setInterval(updateOverallTimer, 1000);
 
 // Per-row live elapsed ticker — only running rows tick.
 const tickers = new Map();
@@ -406,4 +409,32 @@ function rowState(stage, profile = null) {
     return 'queued';
 }
 
-document.addEventListener('DOMContentLoaded', run);
+/** Opened without a run token (reload, Back/Forward, link from elsewhere):
+ *  don't re-run the pipeline — it executes the sample — without asking. */
+function showRunPrompt() {
+    clearInterval(overallTimer);
+    const banner = document.getElementById('allDoneBanner');
+    const host = banner ? banner.parentElement : document.querySelector('.lb-panel-body');
+    if (!host) return;
+    const box = document.createElement('div');
+    box.className = 'lb-empty';
+    box.style.cssText = 'flex-direction: row; align-items: center; gap: 10px; padding: 12px 16px; margin-bottom: 12px;';
+    const msg = document.createElement('span');
+    msg.textContent = 'Pipeline not started — this page was reloaded or opened directly.';
+    const btn = document.createElement('button');
+    btn.className = 'lb-btn';
+    btn.textContent = 'Run pipeline (executes the sample)';
+    btn.addEventListener('click', () => {
+        box.remove();
+        runStart = Date.now();
+        overallTimer = setInterval(updateOverallTimer, 1000);
+        run();
+    });
+    box.append(msg, btn);
+    host.prepend(box);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (window.lbConsumeRun()) run();
+    else showRunPrompt();
+});

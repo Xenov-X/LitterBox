@@ -82,10 +82,11 @@ def render_file_info(data):
     file_info = data['file_info']
     logger = current_app.logger
 
-    if 'pe_info' in file_info:
-        pe_info = file_info['pe_info']
-
-        for section in pe_info['sections']:
+    # get_pe_info stores pe_info=None when pefile can't parse an MZ file
+    # (truncated / corrupt PE) — treat that the same as "no PE info".
+    pe_info = file_info.get('pe_info')
+    if pe_info:
+        for section in pe_info.get('sections') or []:
             section['entropy_risk'] = risk_analyzer.get_entropy_risk_level(section['entropy'])
             logger.debug(
                 f"Calculated entropy risk for section {section.get('name', 'unknown')}: "

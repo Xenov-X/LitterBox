@@ -50,6 +50,7 @@ class DoppelgangerMixin:
 
     def compare_with_blender(self, file_hash: str) -> Dict:
         """Compare a file against the latest Blender host snapshot."""
+        file_hash = self._validate_hash(file_hash)
         return self.doppelganger_operation("blender", "compare", file_hash=file_hash)
 
     def create_fuzzy_database(
@@ -62,6 +63,7 @@ class DoppelgangerMixin:
 
     def analyze_with_fuzzy(self, file_hash: str, threshold: int = 1) -> Dict:
         """Score a payload's similarity to the baseline via fuzzy hashing."""
+        file_hash = self._validate_hash(file_hash)
         return self.doppelganger_operation(
             "fuzzy", "analyze", file_hash=file_hash, threshold=threshold,
         )

@@ -198,7 +198,7 @@
                            placeholder="Enter arguments separated by spaces" class="lb-input lb-mono"/>
                     <p id="edrArgsHint-{{ profile.name }}" class="lb-muted" style="margin-top: 6px; font-size: 12px;">Forwarded to the spawned process on the EDR VM. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span>.</p>
                 </div>
-                <button type="button" onclick="selectAnalysisType('edr:{{ profile.name }}')" class="lb-mode-cta">
+                <button type="button" data-analysis-type="edr:{{ profile.name }}" onclick="selectAnalysisType(this.dataset.analysisType)" class="lb-mode-cta">
                     Run with {{ profile.display_name }}
                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 </button>

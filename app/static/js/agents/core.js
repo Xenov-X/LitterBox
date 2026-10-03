@@ -89,7 +89,7 @@ function applyStatus(agent) {
     if (errEl) {
         const errs = [];
         if (a.error) errs.push(`Agent: ${a.error}`);
-        if (e.error) errs.push(`Elastic: ${e.error}`);
+        if (b.error) errs.push(`Backend: ${b.error}`);
         if (errs.length) {
             errEl.textContent = errs.join('  ·  ');
             errEl.classList.remove('hidden');

@@ -1,7 +1,6 @@
 # app/helpers.py
 """Shared route-level helpers used across blueprints."""
 import glob
-import json
 import os
 import shutil
 
@@ -138,9 +137,9 @@ class RouteHelpers:
         # `Run All` race). Re-create the directory rather than crashing —
         # the operator can delete again if they want it gone. Alternative
         # was an unhandled FileNotFoundError that took down the request.
-        os.makedirs(os.path.dirname(results_file_path), exist_ok=True)
-        with open(results_file_path, 'w') as f:
-            json.dump(results, f)
+        # Atomic: the /files page and the EDR poll endpoint read these
+        # files while analyses (and the EDR Phase-2 thread) write them.
+        json_helpers.write_json_atomic(results_file_path, results)
         self.logger.debug(f"Analysis results saved to: {results_file_path}")
         return results_file_path
 

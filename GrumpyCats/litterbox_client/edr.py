@@ -50,6 +50,8 @@ class EdrMixin:
         ``get_edr_results(file_hash, profile)`` until status is no longer
         'polling_alerts', or use ``wait_for_edr_completion`` below.
         """
+        file_hash = self._validate_hash(file_hash)
+        profile = self._validate_profile(profile)
         data: Dict = {}
         if cmd_args:
             data.update(self._validate_command_args(cmd_args))
@@ -65,6 +67,8 @@ class EdrMixin:
 
     def get_edr_results(self, file_hash: str, profile: str) -> Dict:
         """Fetch the saved findings for a specific EDR profile run."""
+        file_hash = self._validate_hash(file_hash)
+        profile = self._validate_profile(profile)
         response = self._make_request(
             "GET", f"/api/results/edr/{profile}/{file_hash}",
         )
@@ -72,6 +76,7 @@ class EdrMixin:
 
     def get_edr_index(self, file_hash: str) -> Dict:
         """Fetch every saved EDR run for a target (one entry per profile)."""
+        file_hash = self._validate_hash(file_hash)
         response = self._make_request("GET", f"/api/results/edr/{file_hash}")
         return response.json()
 
@@ -85,6 +90,8 @@ class EdrMixin:
         """Block until Phase-2 settles, the saved JSON appears for the
         first time, or `timeout` elapses. Returns the last-seen findings
         dict (may still be 'polling_alerts' on timeout — caller decides)."""
+        file_hash = self._validate_hash(file_hash)
+        profile = self._validate_profile(profile)
         deadline = time.monotonic() + timeout
         last: Optional[Dict] = None
         while time.monotonic() < deadline:
@@ -114,6 +121,7 @@ class EdrMixin:
         `{supported, events: [...]}` shape; `data` strings inside each
         event are unparsed JSON the caller can deserialize.
         """
+        profile = self._validate_profile(profile)
         params = {"from": since_iso}
         if until_iso:
             params["until"] = until_iso

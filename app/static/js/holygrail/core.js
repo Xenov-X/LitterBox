@@ -23,8 +23,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let currentHash = null;
   let currentName = null;
-  let abort = false;
   let analysisComplete = false;
+
+  // Each upload is a "run". Cancel/reset bumps runToken and aborts the
+  // in-flight requests, so a cancelled run's late responses are ignored
+  // (a boolean flag was reset to false by hardReset() before they came).
+  let runToken = 0;
+  let runController = null;
+  function startRun() {
+    runToken++;
+    if (runController) runController.abort();
+    runController = new AbortController();
+    return runToken;
+  }
+  function cancelRun() {
+    runToken++;
+    if (runController) runController.abort();
+    runController = null;
+  }
+  const isStale = (token) => token !== runToken;
+  const isAbort = (err) => err && err.name === 'AbortError';
 
   // FIXED: Proper drag and drop implementation
   let dragCounter = 0;
@@ -102,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Button handlers
   ElementCache.get('cancelBtn')?.addEventListener('click', () => {
-    abort = true;
+    cancelRun();
     toast('Analysis cancelled by user', 'warning');
     hardReset();
   });
@@ -122,9 +140,6 @@ document.addEventListener('DOMContentLoaded', () => {
       toast('No hash available to copy', 'warning');
     }
   });
-  localStorage.setItem('currentFileExtension', 'sys');
-
-  // ADD THE FUNCTION HERE
   function runStaticScan() {
     if (!currentHash) {
       console.error('No file hash available');
@@ -133,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Navigate to static analysis
-    window.location.href = `/analyze/static/${currentHash}`;
+    window.lbStartRun(`/analyze/static/${encodeURIComponent(currentHash)}`);
   }
 
   // Make it globally accessible
@@ -156,11 +171,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    abort = false;
+    const token = startRun();
     analysisComplete = false;
     showStepper();
     stageUpload(file);
-    upload(file);
+    upload(file, token);
   }
 
   function stageUpload(file) {
@@ -194,16 +209,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
   // ====== Optimized Network Operations ======
-  function upload(file) {
+  function upload(file, token) {
     const form = new FormData();
     form.append('file', file);
     
     fetch('/holygrail', { 
       method: 'POST', 
-      body: form
+      body: form,
+      signal: runController.signal,
     })
       .then(jsonOrThrow)
       .then(data => {
+        if (isStale(token)) return;
         if (data.error) throw new Error(data.error);
         
         const info = data.file_info;
@@ -225,22 +242,23 @@ document.addEventListener('DOMContentLoaded', () => {
         log('Driver uploaded.');
         progress(20);
         
-        runAnalysis(currentHash);
+        runAnalysis(currentHash, token);
       })
       .catch(err => {
+        if (isStale(token) || isAbort(err)) return;
         console.error('Upload error:', err);
         toast(`Upload failed: ${err.message}`, 'error');
         hardReset();
       });
   }
 
-  function runAnalysis(md5) {
+  function runAnalysis(md5, token) {
     if (!md5) {
       toast('Missing MD5 hash for analysis', 'error');
       return;
     }
     
-    if (abort) return;
+    if (isStale(token)) return;
 
     const steps = [
       'Parsing PE headers…',
@@ -252,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let stepIndex = 0;
     const stepInterval = setInterval(() => {
-      if (abort) {
+      if (isStale(token)) {
         clearInterval(stepInterval);
         return;
       }
@@ -266,10 +284,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }, HOLYGRAIL.stepDurationMs);
 
-    fetch(`/holygrail?hash=${encodeURIComponent(md5)}`, { method: 'GET' })
+    fetch(`/holygrail?hash=${encodeURIComponent(md5)}`, { method: 'GET', signal: runController.signal })
       .then(jsonOrThrow)
       .then(raw => {
-        if (abort) return;
+        if (isStale(token)) return;
         if (raw.error) throw new Error(raw.error);
 
         clearInterval(stepInterval);
@@ -286,10 +304,11 @@ document.addEventListener('DOMContentLoaded', () => {
         log('Scan complete.');
         progress(100);
 
-        setTimeout(() => showResults(normalized), 250);
+        setTimeout(() => showResults(normalized, token), 250);
       })
       .catch(err => {
         clearInterval(stepInterval);
+        if (isStale(token) || isAbort(err)) return;
         console.error('Analysis error:', err);
         toast(`Analysis failed: ${err.message}`, 'error');
         hardReset();
@@ -297,8 +316,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ====== Optimized Results Display ======
-  function showResults(normalized) {
-    if (abort) return;
+  function showResults(normalized, token) {
+    if (isStale(token)) return;
 
     markStep(ElementCache.get('s2'), 'done');
     markStep(ElementCache.get('s3'), 'active');
@@ -648,7 +667,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function hardReset() {
-    abort = true;
+    cancelRun();
     analysisComplete = false;
     
     fadeOut(ElementCache.get('resultsCard'));
@@ -702,7 +721,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     currentHash = null;
     currentName = null;
-    abort = false;
   }
 
   // ====== Optimized Animation Functions ======

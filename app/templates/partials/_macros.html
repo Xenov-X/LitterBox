@@ -25,12 +25,24 @@
 {%- endmacro %}
 
 
-{# Renders the Detected / Clean status badge cell. #}
-{% macro scanner_status_cell(detections) -%}
+{# True when a scanner result carries no verdict: it errored, timed out or
+   was skipped, or exited non-zero without any parsed detections. #}
+{% macro _no_verdict(result, detections) -%}
+{%- if result and (result.status in ('error', 'timeout', 'skipped') or (result.status == 'failed' and not detections)) -%}1{%- endif -%}
+{%- endmacro %}
+
+
+{# Renders the Detected / Clean / Failed status badge cell. Pass the
+   scanner's result dict so a failed scan isn't shown as Clean. #}
+{% macro scanner_status_cell(detections, result=none) -%}
 <td>
+    {% if _no_verdict(result, detections) %}
+    <span class="lb-tag medium" title="{{ result.error or result.reason or result.status }}">Failed</span>
+    {% else %}
     <span class="lb-tag {{ 'critical' if detections else 'clean' }}">
         {{ 'Detected' if detections else 'Clean' }}
     </span>
+    {% endif %}
 </td>
 {%- endmacro %}
 
@@ -42,14 +54,19 @@
 
 
 {# Renders the 3-chip "Overall Status / Total Detections / Duration" panel. #}
-{% macro status_grid_3(total, duration_label, duration_value) -%}
+{# `results` is the list of scanner result dicts shown on the page; any
+   scanner without a verdict turns a zero-detection "Clean" into
+   "Incomplete". #}
+{% macro status_grid_3(total, duration_label, duration_value, results=[]) -%}
+{% set ns = namespace(incomplete=false) %}
+{% for r in results %}{% if _no_verdict(r, 0) %}{% set ns.incomplete = true %}{% endif %}{% endfor %}
 <div class="lb-panel">
     <div class="lb-panel-hdr"><span class="lb-glyph">▸</span>Overall Status</div>
     <div class="lb-chip-row">
         <div class="lb-chip{% if total > 0 %} hit{% endif %}">
             <div class="lb-chip-name">Status</div>
-            <div id="overallStatus" class="lb-chip-count" style="font-size: 14px; color: {{ 'var(--lb-accent)' if total > 0 else 'var(--lb-sev-low)' }};">
-                {{ 'Detections' if total > 0 else 'Clean' }}
+            <div id="overallStatus" class="lb-chip-count" style="font-size: 14px; color: {{ 'var(--lb-accent)' if total > 0 else ('var(--lb-sev-medium)' if ns.incomplete else 'var(--lb-sev-low)') }};">
+                {{ 'Detections' if total > 0 else ('Incomplete' if ns.incomplete else 'Clean') }}
             </div>
         </div>
         <div class="lb-chip{% if total > 0 %} hit{% endif %}">
@@ -66,10 +83,10 @@
 
 
 {# Full YARA scanner row — identical between static and dynamic result pages. #}
-{% macro scanner_yara_row(detections, matches) -%}
+{% macro scanner_yara_row(detections, matches, result=none) -%}
 <tr>
     <td>YARA</td>
-    {{ scanner_status_cell(detections) }}
+    {{ scanner_status_cell(detections, result) }}
     {{ scanner_count_cell(detections) }}
     <td>
         {% if detections %}

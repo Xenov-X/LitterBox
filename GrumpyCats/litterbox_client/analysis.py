@@ -45,6 +45,7 @@ class AnalysisMixin:
                 if e.status_code == 404:
                     raise LitterBoxError(f"File {target} not found or not yet available")
 
+        target = self._validate_target(target)
         params = {"wait": "1" if wait_for_completion else "0"}
         data = self._validate_command_args(cmd_args)
 
@@ -62,6 +63,7 @@ class AnalysisMixin:
 
     def analyze_holygrail(self, file_hash: str, wait_for_completion: bool = True) -> Dict:
         """Run HolyGrail BYOVD analysis on a kernel driver."""
+        file_hash = self._validate_hash(file_hash)
         params = {"hash": file_hash}
         if wait_for_completion:
             params["wait"] = "1"
