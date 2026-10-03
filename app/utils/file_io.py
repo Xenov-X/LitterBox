@@ -392,8 +392,12 @@ def _build_entropy_analysis(entropy_value):
     return analysis
 
 
-def save_uploaded_file(file, config):
-    """Persist an uploaded file, compute hashes/entropy/PE info, and write file_info.json."""
+def save_uploaded_file(file, config, *, allow_live_edr=False):
+    """Persist an uploaded file, compute hashes/entropy/PE info, and write file_info.json.
+
+    ``allow_live_edr`` is written once and never updated — it gates whether
+    the sample may be dispatched to EDR profiles with ``live_edr: true``.
+    """
     file_content = file.read()
     file.close()
 
@@ -429,6 +433,7 @@ def save_uploaded_file(file, config):
         'entropy': entropy_value,
         'entropy_analysis': _build_entropy_analysis(entropy_value),
         'detected_type': file_type_info,
+        'allow_live_edr': bool(allow_live_edr),
     }
 
     if file_type_info['family'] == 'pe':

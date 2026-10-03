@@ -51,8 +51,10 @@ def upload_file():
         app.logger.debug(f"File type of '{file.filename}' is not allowed.")
         return jsonify({'error': 'File type not allowed'}), 400
 
+    allow_live_edr = request.form.get("allow_live_edr", "").lower() == "true"
+
     app.logger.debug(f"File '{file.filename}' is allowed. Attempting to save.")
-    file_info = file_io.save_uploaded_file(file, app.config)
+    file_info = file_io.save_uploaded_file(file, app.config, allow_live_edr=allow_live_edr)
     app.logger.debug(f"File '{file.filename}' uploaded and saved successfully.")
     return jsonify({
         'message': 'File uploaded successfully',

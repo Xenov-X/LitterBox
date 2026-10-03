@@ -64,6 +64,7 @@ class EdrProfile:
     name: str
     display_name: str
     agent_url: str
+    live_edr: bool = False
     kind: str = "elastic"
 
     elastic_url: Optional[str] = None
@@ -95,6 +96,8 @@ class EdrProfile:
         backend_required, _ = _get_backend_fields(kind)
         required = common_required + tuple(backend_required)
         missing = [k for k in required if not data.get(k)]
+        if "live_edr" not in data:
+            missing.append("live_edr")
         if missing:
             raise EdrProfileError(f"missing required field(s): {', '.join(missing)}")
 
@@ -106,6 +109,7 @@ class EdrProfile:
             name=data["name"],
             display_name=data["display_name"],
             agent_url=data["agent_url"].rstrip("/"),
+            live_edr=bool(data["live_edr"]),
             kind=kind,
             elastic_url=(data.get("elastic_url") or "").rstrip("/") or None,
             elastic_apikey=data.get("elastic_apikey"),

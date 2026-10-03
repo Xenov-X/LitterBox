@@ -20,6 +20,11 @@ kind: "exec"
 name: "exec-lowpriv"
 display_name: "Exec · Standard User"
 
+# Whether this profile is connected to live vendor infrastructure that may
+# ingest samples. Exec-only profiles have no detection backend, so this is
+# typically false.
+live_edr: false
+
 # Whiskers agent on the target VM. The agent self-reports its hostname
 # and running user context via GET /api/info.
 agent_url: "http://192.168.1.110:8080"

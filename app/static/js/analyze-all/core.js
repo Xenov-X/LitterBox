@@ -13,7 +13,8 @@
 // an elapsed counter. Static failure still allows Dynamic to start (the
 // operator decides if a static-fail run is worth observing dynamically).
 
-const cfg = window.__allRunCfg || { fileHash: '', edrProfiles: [] };
+const cfg = window.__allRunCfg || { fileHash: '', edrProfiles: [], liveEdrProfiles: [], allowLiveEdr: false };
+const LIVE_EDR = new Set(cfg.liveEdrProfiles || []);
 const PAGE_START = Date.now();
 const POST_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -300,7 +301,9 @@ async function run() {
     const reachable = await probeReachableProfiles();
     const edrToDispatch = [];
     for (const p of cfg.edrProfiles) {
-        if (reachable === null || reachable.has(p)) {
+        if (LIVE_EDR.has(p) && !cfg.allowLiveEdr) {
+            setStatus('edr', p, 'skipped', 'Live EDR — sample not authorized');
+        } else if (reachable === null || reachable.has(p)) {
             edrToDispatch.push(p);
         } else {
             setStatus('edr', p, 'skipped', 'Agent unreachable — skipped');

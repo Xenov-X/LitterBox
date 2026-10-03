@@ -257,6 +257,8 @@
 window.__allRunCfg = {
     fileHash: {{ file_hash | tojson }},
     edrProfiles: {{ edr_profiles | map(attribute='name') | list | tojson }},
+    liveEdrProfiles: {{ edr_profiles | selectattr('live_edr') | map(attribute='name') | list | tojson }},
+    allowLiveEdr: {{ allow_live_edr | tojson }},
 };
 </script>
 

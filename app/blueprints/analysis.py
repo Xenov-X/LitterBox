@@ -172,12 +172,22 @@ def analyze_all_page(target):
     progress shell — orchestration happens in JS, hitting the existing
     /analyze/static, /analyze/edr/<profile>, and /analyze/dynamic
     endpoints. No new analyzer code on the server side."""
-    deps = current_app.extensions['litterbox']
+    app = current_app
+    deps = app.extensions['litterbox']
+
+    result_path = path_manager.find_file_by_hash(target, app.config['utils']['result_folder'])
+    file_info = {}
+    if result_path:
+        file_info = json_helpers.load_json_file(
+            os.path.join(result_path, 'file_info.json')
+        ) or {}
+
     return render_template(
         'analyze_all.html',
-        config=current_app.config,
+        config=app.config,
         file_hash=target,
         edr_profiles=deps.edr_registry.list_profiles(),
+        allow_live_edr=file_info.get('allow_live_edr', False),
     )
 
 
@@ -231,6 +241,24 @@ def analyze_edr(profile, target):
     if not result_path:
         app.logger.warning(f"Result path not found for hash: {target}")
         return jsonify({'error': 'Result path not found'}), 404
+
+    profile_obj = deps.edr_registry.get_profile(profile)
+    if profile_obj.live_edr:
+        file_info = json_helpers.load_json_file(
+            os.path.join(result_path, 'file_info.json')
+        ) or {}
+        if not file_info.get('allow_live_edr'):
+            app.logger.warning(
+                f"Blocked dispatch to live EDR profile {profile!r} — "
+                f"sample {target} not authorized for live EDR"
+            )
+            return jsonify({
+                'error': (
+                    f'Sample not authorized for live EDR. '
+                    f'Profile "{profile_obj.display_name}" is marked live_edr — '
+                    f're-upload with "Allow live EDR" enabled to dispatch.'
+                ),
+            }), 403
 
     # Pull cmd args from the POST body (validated/sanitized like the
     # dynamic-analysis route does) and join into the single string

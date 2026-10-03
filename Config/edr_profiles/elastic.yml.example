@@ -20,6 +20,12 @@
 name: "elastic"
 display_name: "Elastic Defend"
 
+# Whether this profile is connected to live vendor infrastructure that may
+# ingest samples. Set to true if the Elastic stack forwards telemetry to
+# Elastic's cloud or any vendor-operated service. Samples uploaded without
+# "Allow live EDR" will be blocked from dispatch to profiles marked true.
+live_edr: false
+
 # Whiskers agent on the EDR VM. The agent self-reports its hostname via
 # GET /api/info — you do NOT configure hostname here. Move the agent to a
 # different VM and the integration follows it automatically.

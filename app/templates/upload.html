@@ -56,6 +56,13 @@
                 </label>
             </div>
             <div id="uploadStatus" class="hidden" style="margin-top: 12px;"></div>
+            <label id="liveEdrToggle" style="display: flex; align-items: center; gap: 8px; margin-top: 12px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="allowLiveEdr" style="accent-color: var(--lb-accent-soft); width: 16px; height: 16px; cursor: pointer;"/>
+                <span>
+                    <span class="lb-strong" style="font-size: 13px;">Allow live EDR</span>
+                    <span class="lb-muted" style="font-size: 11px; margin-left: 6px;">Permit dispatch to EDR profiles connected to vendor infrastructure</span>
+                </span>
+            </label>
         </div>
     </div>
 </div>
@@ -87,6 +94,7 @@
             <button type="button" class="lb-tab" data-mode="edr:{{ profile.name }}" data-family="regular">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>
                 {{ profile.display_name }}
+                {% if profile.live_edr %}<span class="lb-tag high" style="margin-left: 4px; font-size: 9px;">LIVE</span>{% endif %}
             </button>
             {% endfor %}
             <button type="button" class="lb-tab" data-mode="static-driver" data-family="driver">
@@ -176,6 +184,9 @@
                     <div class="lb-muted" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;">EDR Detonation</div>
                 </div>
                 <p class="lb-dim" style="font-size: 12px;">Dispatches the payload to <span class="lb-mono">{{ profile.agent_url }}</span> via the Whiskers agent and pulls detection alerts from the configured backend.</p>
+                {% if profile.live_edr %}
+                <p class="lb-live-edr-badge hidden" style="font-size: 12px; padding: 6px 10px; margin-top: 8px; border: 1px solid rgba(248, 113, 113, 0.3); background: rgba(248, 113, 113, 0.06); color: var(--lb-accent-soft);">This profile is connected to live vendor infrastructure. Enable <span class="lb-strong">"Allow live EDR"</span> in the upload zone to dispatch.</p>
+                {% endif %}
                 <ul class="lb-mode-features">
                     <li class="lb-ok">Whiskers Agent Dispatch</li>
                     <li class="lb-ok">EDR Alert Correlation</li>
@@ -387,7 +398,8 @@
         maxFileSize: {{ config.utils.max_file_size }},
         maxFileSizeMB: {{ (config.utils.max_file_size / 1024 / 1024) | round(1) }},
         allowedExtensions: {{ config.utils.allowed_extensions | tojson }},
-        launchers: {{ config.utils.get('launchers', {}) | tojson }}
+        launchers: {{ config.utils.get('launchers', {}) | tojson }},
+        liveEdrProfiles: {{ edr_profiles | selectattr('live_edr') | map(attribute='name') | list | tojson }}
     };
 </script>
 
@@ -449,6 +461,15 @@
     border-color: #3b82f6;
     color: #93c5fd;
     outline: none;
+}
+.lb-mode-cta:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+.lb-tab--locked {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 .lb-mode-cta--warn:hover, .lb-mode-cta--warn:focus-visible {
     background: rgba(250, 204, 21, 0.14);

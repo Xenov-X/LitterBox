@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
     ]);
     const HTML_EXTS = new Set(['html', 'htm']);
     const launchers = (window.serverConfig && window.serverConfig.launchers) || {};
+    const liveEdrProfiles = new Set((window.serverConfig && window.serverConfig.liveEdrProfiles) || []);
 
     function setArgsHint(input, hint, lc, ext) {
         if (lc) {
@@ -287,13 +288,48 @@ document.addEventListener('DOMContentLoaded', function() {
         if (allArgs) {
             setArgsHint(allArgs, allArgs.nextElementSibling, lc, ext);
         }
+
+        // Gate live-EDR profiles: when the toggle is off, disable their tabs
+        // and CTA buttons so operators can't accidentally dispatch.
+        const allowLive = !!(document.getElementById('allowLiveEdr') || {}).checked;
+        if (liveEdrProfiles.size) {
+            document.querySelectorAll('#modeTabs .lb-tab').forEach(t => {
+                const mode = t.dataset.mode || '';
+                if (!mode.startsWith('edr:')) return;
+                const profile = mode.slice(4);
+                if (!liveEdrProfiles.has(profile)) return;
+                t.classList.toggle('lb-tab--locked', !allowLive);
+                t.title = allowLive ? '' : 'Live EDR — enable "Allow live EDR" to dispatch';
+            });
+            document.querySelectorAll('.lb-mode-body').forEach(body => {
+                const mode = body.dataset.mode || '';
+                if (!mode.startsWith('edr:')) return;
+                const profile = mode.slice(4);
+                if (!liveEdrProfiles.has(profile)) return;
+                const cta = body.querySelector('.lb-mode-cta');
+                if (cta) {
+                    cta.disabled = !allowLive;
+                    cta.title = allowLive ? '' : 'Sample not authorized for live EDR';
+                }
+                const badge = body.querySelector('.lb-live-edr-badge');
+                if (badge) badge.classList.toggle('hidden', allowLive);
+            });
+        }
+    }
+
+    // Re-evaluate live-EDR gating when the toggle changes.
+    const liveToggle = document.getElementById('allowLiveEdr');
+    if (liveToggle) {
+        liveToggle.addEventListener('change', () => {
+            if (currentFileExtension) updateAnalysisOptions(currentFileExtension);
+        });
     }
 
     // Wire tab clicks. Activating a tab swaps the active class and reveals
     // the matching mode body.
     document.getElementById('modeTabs').addEventListener('click', (e) => {
         const tab = e.target.closest('.lb-tab');
-        if (!tab || tab.classList.contains('hidden')) return;
+        if (!tab || tab.classList.contains('hidden') || tab.classList.contains('lb-tab--locked')) return;
         document.querySelectorAll('#modeTabs .lb-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         document.querySelectorAll('.lb-mode-body').forEach(b => b.classList.add('hidden'));
@@ -862,6 +898,8 @@ document.addEventListener('DOMContentLoaded', function() {
         currentFileHash = fileInfo.md5;
         currentFileExtension = fileInfo.extension;
 
+        localStorage.setItem('allowLiveEdr', JSON.stringify(!!fileInfo.allow_live_edr));
+
         elements.fileName.textContent = fileInfo.original_name;
         elements.fileSize.textContent = formatFileSize(fileInfo.size);
         elements.fileType.textContent = fileInfo.extension.toUpperCase();
@@ -930,6 +968,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const formData = new FormData();
         formData.append('file', file);
+        const liveToggle = document.getElementById('allowLiveEdr');
+        if (liveToggle && liveToggle.checked) {
+            formData.append('allow_live_edr', 'true');
+        }
 
         fetch('/upload', {
             method: 'POST',

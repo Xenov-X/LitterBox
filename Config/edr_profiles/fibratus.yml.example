@@ -59,6 +59,11 @@
 name: "fibratus"
 display_name: "Fibratus"
 
+# Whether this profile is connected to live vendor infrastructure that may
+# ingest samples. Fibratus runs locally with no cloud telemetry by default,
+# so this is typically false.
+live_edr: false
+
 # Kind discriminator — selects the analyzer + alert source. Without this,
 # the loader assumes elastic and will demand elastic_url / elastic_apikey.
 kind: "fibratus"

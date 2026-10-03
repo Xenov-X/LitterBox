@@ -82,6 +82,7 @@ def list_profiles() -> List[dict]:
             "kind": p.kind,
             "kind_label": getattr(backends.get(p.kind), "label", p.kind),
             "has_correlation": getattr(backends.get(p.kind), "has_correlation", True),
+            "live_edr": p.live_edr,
         }
         for p in _PROFILES.values()
     ]
