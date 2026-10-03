@@ -19,6 +19,26 @@ class HSBAnalyzer(BaseSubprocessAnalyzer):
     tool_name = 'hsb'
     target_kwarg = 'pid'
 
+    def _build_command(self, cfg, target):
+        argv = super()._build_command(cfg, target)
+        if target == '*':
+            # System-wide scan (Blender): HSB has no `-p *`; omitting the
+            # PID option makes it scan every accessible process.
+            cleaned = []
+            skip_next = False
+            for token in argv:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if token in ('-p', '--pid'):
+                    skip_next = True
+                    continue
+                if token == '*':
+                    continue
+                cleaned.append(token)
+            argv = cleaned
+        return argv
+
     def _preprocess_stdout(self, stdout):
         return _ANSI_ESCAPE.sub('', stdout)
 

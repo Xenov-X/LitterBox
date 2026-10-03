@@ -3,6 +3,8 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 
+from .process_utils import build_argv, run_tool
+
 
 class BaseAnalyzer(ABC):
     def __init__(self, config):
@@ -42,9 +44,8 @@ class BaseSubprocessAnalyzer(BaseAnalyzer):
     tool_name = None             # e.g. 'pe_sieve' — required
     target_kwarg = 'pid'         # name passed to command.format(): 'pid' | 'file_path' | 'directory'
     extra_format_kwargs = ()     # additional config keys to forward to command.format()
-    abspath_targets = False      # apply os.path.abspath to tool_path and (string) target before formatting
+    abspath_targets = False      # apply os.path.abspath to the (string) target before formatting
     use_tool_path_as_cwd = False # run subprocess with cwd=dirname(tool_path)
-    use_timeout = True           # set False for tools that should run without a timeout
 
     def analyze(self, target):
         cfg = None
@@ -57,7 +58,7 @@ class BaseSubprocessAnalyzer(BaseAnalyzer):
             command = self._build_command(cfg, target)
             stdout, stderr, returncode = self._run_subprocess(
                 command,
-                timeout=cfg.get('timeout') if self.use_timeout else None,
+                timeout=cfg.get('timeout'),
                 cwd=self._get_cwd(cfg),
             )
             stdout = self._preprocess_stdout(stdout)
@@ -73,28 +74,22 @@ class BaseSubprocessAnalyzer(BaseAnalyzer):
         return self.config['analysis'][self.tool_section][self.tool_name]
 
     def _build_command(self, cfg, target):
-        tool_path = cfg['tool_path']
+        """argv list for the tool. The template is split before values
+        are substituted, so paths containing spaces stay one argument;
+        nothing goes through a shell."""
+        # Absolute so it resolves the same with or without a cwd override.
+        tool_path = os.path.abspath(cfg['tool_path'].strip())
         target_value = target
-        if self.abspath_targets:
-            tool_path = os.path.abspath(tool_path)
-            if isinstance(target_value, str):
-                target_value = os.path.abspath(target_value)
+        if self.abspath_targets and isinstance(target_value, str):
+            target_value = os.path.abspath(target_value)
         kwargs = {'tool_path': tool_path, self.target_kwarg: target_value}
         for key in self.extra_format_kwargs:
             kwargs[key] = cfg[key]
-        return cfg['command'].format(**kwargs)
+        return build_argv(cfg['command'], **kwargs)
 
     def _run_subprocess(self, command, timeout=None, cwd=None):
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            cwd=cwd,
-        )
-        stdout, stderr = process.communicate(timeout=timeout)
-        return stdout, stderr, process.returncode
+        # run_tool kills the tool's whole process tree on timeout.
+        return run_tool(command, timeout=timeout, cwd=cwd)
 
     def _get_cwd(self, cfg):
         if self.use_tool_path_as_cwd:

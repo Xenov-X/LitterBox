@@ -3,7 +3,6 @@
 
 import os
 import logging
-import glob
 import json
 import re
 from typing import Optional
@@ -11,6 +10,7 @@ from datetime import datetime
 from .dynamic.moneta_analyzer import MonetaAnalyzer
 from .dynamic.hsb_analyzer import HSBAnalyzer
 from .dynamic.hollows_hunter_analyzer import HollowsHunterAnalyzer
+from ..utils import path_manager
 
 class BlenderAnalyzer:
     def __init__(self, config: dict, logger: Optional[logging.Logger] = None):
@@ -398,10 +398,10 @@ class BlenderAnalyzer:
         try:
             self.logger.debug(f"Comparing payload with hash: {payload_hash}")
             
-            # Get payload's analysis results
-            result_dir = os.path.join(self.config['utils']['result_folder'], f"{payload_hash}_*", "dynamic_analysis_results.json")
-            matching_files = glob.glob(result_dir)
-
+            # Get payload's analysis results (`<md5>_<name>` result folder)
+            result_folder = path_manager.find_file_by_hash(payload_hash, self.config['utils']['result_folder'])
+            results_file = os.path.join(result_folder, self.analysis_filename) if result_folder else None
+            matching_files = [results_file] if results_file and os.path.isfile(results_file) else []
 
             if not matching_files:
                 self.logger.error(f"No analysis results found for payload: {payload_hash}")
@@ -481,4 +481,4 @@ class BlenderAnalyzer:
            
         except Exception as e:
             self.logger.error(f"Error comparing payload {payload_hash}: {str(e)}")
-            return {"error": str(e)}
+            return {"status": "error", "message": str(e)}

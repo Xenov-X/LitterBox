@@ -18,7 +18,6 @@ class MonetaAnalyzer(BaseSubprocessAnalyzer):
     tool_section = 'dynamic'
     tool_name = 'moneta'
     target_kwarg = 'pid'
-    use_timeout = False  # Moneta historically runs without an explicit timeout
 
     def _build_envelope(self, findings, returncode, stderr, stdout, target):
         # Moneta prints e.g. "... failed to open handle to PID 1234" and then

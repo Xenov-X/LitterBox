@@ -175,6 +175,15 @@ def _handle_analysis_results(results, result_path, results_filename):
     app = current_app
     deps = _deps()
 
+    if results.get('status') == 'busy':
+        # Another dynamic run holds the host; keep the previous results.
+        error = results.get('error') or {}
+        return jsonify({
+            'status': 'busy',
+            'error': error.get('message', 'Another analysis is running'),
+            'details': error.get('details'),
+        }), 409
+
     deps.helpers.save_analysis_results(results, result_path, results_filename)
 
     # `error` is a dict from the manager's error envelopes but a plain
