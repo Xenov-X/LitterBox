@@ -78,8 +78,7 @@ function setTag(id, kind, text) {
 function applyAgentRow(agent) {
     const p = agent.name;
     const a = agent.agent || {};
-    const e = agent.elastic || {};
-    const b = agent.backend || e;
+    const b = agent.backend || {};
     const hasBackend = agent.has_correlation !== false;
 
     if (!hasBackend) {

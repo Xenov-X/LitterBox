@@ -16,7 +16,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 
 from app.analyzers.base import BaseAnalyzer
 
@@ -192,15 +192,9 @@ class BaseEdrRunner(BaseAnalyzer):
             else self.profile.wait_seconds_for_alerts
         )
         exec_logs = exec_outcome.get("exec_logs", {})
-        killed_by_edr = (
-            False if is_blocked
-            else self._classify_kill(exec_logs, filename=filename)
-        )
+        killed_by_edr = False
         raw_exec_status = exec_logs.get("status")
-        exec_status_label = (
-            "virus" if is_blocked
-            else ("killed_by_edr" if killed_by_edr else raw_exec_status)
-        )
+        exec_status_label = "virus" if is_blocked else raw_exec_status
 
         has_correlation = self.backend.has_correlation
 
@@ -425,7 +419,6 @@ class BaseEdrRunner(BaseAnalyzer):
         cls,
         exec_logs: dict,
         *,
-        filename: Optional[str] = None,
         alerts: Optional[list] = None,
     ) -> bool:
         raw_status = (exec_logs.get("status") or "").lower()
@@ -453,9 +446,7 @@ class BaseEdrRunner(BaseAnalyzer):
         high_severity_count = sum(
             1 for a in alert_dicts if a.get("severity") in HIGH_SEVERITY
         )
-        killed_by_edr = self._classify_kill(
-            exec_logs, filename=file_name, alerts=alert_dicts,
-        )
+        killed_by_edr = self._classify_kill(exec_logs, alerts=alert_dicts)
         raw_exec_status = exec_logs.get("status")
         exec_status_label = "killed_by_edr" if killed_by_edr else raw_exec_status
 

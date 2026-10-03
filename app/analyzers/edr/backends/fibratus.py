@@ -226,9 +226,8 @@ def _fibratus_labels_to_mitre(labels: dict) -> list:
         chip["subtechnique_id"] = sub_id
         chip["subtechnique_name"] = sub_name
         chip["subtechnique_reference"] = sub_ref or (
-            (lambda: (
-                f"https://attack.mitre.org/techniques/{sub_id.split('.', 1)[0]}/{sub_id.split('.', 1)[1]}/"
-            ))() if sub_id and "." in sub_id else None
+            f"https://attack.mitre.org/techniques/{sub_id.split('.', 1)[0]}/{sub_id.split('.', 1)[1]}/"
+            if sub_id and "." in sub_id else None
         )
     return [chip]
 

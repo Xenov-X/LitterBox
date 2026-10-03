@@ -73,19 +73,20 @@ def list_profiles() -> List[dict]:
     kind-aware affordances and human-readable backend names.
     """
     backends = registered_kinds()
-    return [
-        {
+    result = []
+    for p in _PROFILES.values():
+        bcls = backends.get(p.kind)
+        result.append({
             "name": p.name,
             "display_name": p.display_name,
             "agent_url": p.agent_url,
             "elastic_url": p.elastic_url,
             "kind": p.kind,
-            "kind_label": getattr(backends.get(p.kind), "label", p.kind),
-            "has_correlation": getattr(backends.get(p.kind), "has_correlation", True),
+            "kind_label": getattr(bcls, "label", p.kind),
+            "has_correlation": getattr(bcls, "has_correlation", True),
             "live_edr": p.live_edr,
-        }
-        for p in _PROFILES.values()
-    ]
+        })
+    return result
 
 
 def get_profile(name: str) -> Optional[EdrProfile]:

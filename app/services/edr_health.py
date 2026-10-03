@@ -156,11 +156,4 @@ def _probe_one(p) -> dict:
         },
         "lock": lock,
         "backend": backend_health,
-        # Keep "elastic" key for backward compat with existing frontend
-        "elastic": {
-            "reachable": backend_health.get("reachable"),
-            "error": backend_health.get("error"),
-            "cluster_name": backend_health.get("cluster_name"),
-            "version": backend_health.get("version"),
-        },
     }

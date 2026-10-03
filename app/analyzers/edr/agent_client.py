@@ -2,8 +2,7 @@
 
 Whiskers is the Rust binary deployed on the user's EDR VM. This module is a
 thin wrapper around its REST API — no orchestration, no waiting, no
-analysis-side logic. The orchestrators live in elastic_edr_analyzer.py
-and fibratus_edr_analyzer.py.
+analysis-side logic.
 
 Endpoint reference: see Whiskers/README.md.
 """

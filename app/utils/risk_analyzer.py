@@ -153,8 +153,8 @@ def calculate_risk(analysis_type='process', file_info=None,
                    byovd_results=None, edr_results=None):
     """Unified risk calculation for file, process, and driver analyses.
 
-    `edr_results` is a dict keyed by profile name → orchestrator findings
-    (see app/analyzers/edr/elastic_edr_analyzer.py). When non-empty, the
+    `edr_results` is a dict keyed by profile name → orchestrator findings.
+    When non-empty, the
     file's score gains a contribution scaled by the most severe alert any
     profile raised. The contribution is additive (not weighted) — high-
     severity EDR alerts are a strong runtime signal that should bump the

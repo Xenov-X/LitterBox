@@ -50,14 +50,6 @@ def _get_backend_cls(kind: str):
         return None
 
 
-def _get_backend_fields(kind: str):
-    """Return (required_fields, optional_fields) for a backend kind, or
-    ((), ()) if the backend isn't registered yet."""
-    cls = _get_backend_cls(kind)
-    if cls is None:
-        return (), ()
-    return cls.required_profile_fields, cls.optional_profile_fields
-
 
 @dataclass
 class EdrProfile:
@@ -86,6 +78,8 @@ class EdrProfile:
 
         kind = (data.get("kind") or "elastic").strip().lower()
 
+        backend_cls = _get_backend_cls(kind)
+
         valid_kinds = _get_valid_kinds()
         if valid_kinds is not None and kind not in valid_kinds:
             raise EdrProfileError(
@@ -93,13 +87,12 @@ class EdrProfile:
             )
 
         common_required = ("name", "display_name", "agent_url")
-        backend_required, _ = _get_backend_fields(kind)
+        backend_required = backend_cls.required_profile_fields if backend_cls else ()
         required = common_required + tuple(backend_required)
         missing = [k for k in required if not data.get(k)]
         if missing:
             raise EdrProfileError(f"missing required field(s): {', '.join(missing)}")
 
-        backend_cls = _get_backend_cls(kind)
         if backend_cls is not None:
             backend_cls.validate_profile(data)
 

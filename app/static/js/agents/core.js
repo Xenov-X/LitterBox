@@ -32,8 +32,7 @@ function applyStatus(agent) {
     setText(`agentType-${p}`, agent.type || 'unknown');
 
     const a = agent.agent || {};
-    const e = agent.elastic || {};
-    const b = agent.backend || e;
+    const b = agent.backend || {};
     const hasBackend = agent.has_correlation !== false;
 
     if (!hasBackend) {
@@ -70,7 +69,7 @@ function applyStatus(agent) {
     }
 
     if (!hasBackend) {
-        const label = agent.has_correlation === false ? 'Exec-only (no backend)' : 'Agent-only (no remote backend)';
+        const label = 'Exec-only (no backend)';
         setText(`agentElastic-${p}`, label);
         setColor(`agentElastic-${p}`, 'var(--lb-text-mute)');
         setText(`agentCluster-${p}`, '—');
