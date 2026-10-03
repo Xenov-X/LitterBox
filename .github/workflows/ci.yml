@@ -24,7 +24,7 @@ jobs:
         run: |
           pytest tests/ -v --tb=short --timeout=60
           $code = $LASTEXITCODE
-          # Kill orphan processes (conhost) that keep the step hanging
+          # Orphan python/conhost processes keep the step's stdout handles open
           Get-Process -Name python -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
           exit $code
