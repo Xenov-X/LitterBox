@@ -2,6 +2,7 @@
 import json
 import os
 import threading
+import time
 
 from app.services import summary_cache
 from app.utils.json_helpers import load_json_file, write_json_atomic
@@ -23,6 +24,7 @@ def test_write_json_atomic_never_exposes_partial_file(tmp_path):
                 bad.append(1)
             except OSError:
                 pass
+            time.sleep(0.001)
 
     t = threading.Thread(target=reader)
     t.start()
