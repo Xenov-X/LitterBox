@@ -117,9 +117,11 @@ class SecurityAnalyzer:
     def _detect_runtime_type(self, pe):
         """Return 'go', 'rust', or None based on PE section content."""
         try:
+            # Toolchain-specific symbols / paths only. Bare b'cargo' and
+            # b'rustup' matched unrelated strings in non-Rust binaries.
             rust_indicators = [
-                b'rustc', b'rust_begin_unwind', b'rust_panic', b'rust_oom',
-                b'__rust_', b'.rustc_info', b'cargo', b'rustup',
+                b'/rustc/', b'\\rustc\\', b'rust_begin_unwind', b'rust_panic',
+                b'rust_oom', b'__rust_', b'.rustc_info',
             ]
 
             rust_found = False
@@ -140,7 +142,7 @@ class SecurityAnalyzer:
 
             go_sections = ['.go.buildinfo', '.go.plt']
             for section in pe.sections:
-                section_name = section.Name.decode().rstrip('\x00')
+                section_name = _section_name(section)
                 if section_name in go_sections:
                     return "go"
 
@@ -149,17 +151,20 @@ class SecurityAnalyzer:
                 b'runtime.newproc', b'runtime.mallocgc', b'go.string.',
                 b'go.func.', b'go.itab.', b'go.mod', b'runtime.systemstack',
                 b'go:linkname', b'go:nosplit', b'go:noescape',
-                b'runtime.schedt', b'runtime.g', b'runtime.m',
+                b'runtime.schedt',
             ]
 
-            go_indicator_count = 0
+            # Count *distinct* indicators: the same string present in two
+            # sections, or one indicator that is a prefix of another
+            # (the old b'runtime.m' / b'runtime.main'), must not count twice.
+            found = set()
             for section in pe.sections:
                 try:
                     section_data = section.get_data()
                     for indicator in high_confidence_indicators:
-                        if indicator in section_data:
-                            go_indicator_count += 1
-                            if go_indicator_count >= 2:
+                        if indicator not in found and indicator in section_data:
+                            found.add(indicator)
+                            if len(found) >= 2:
                                 return "go"
                 except Exception:
                     continue
@@ -178,13 +183,13 @@ class SecurityAnalyzer:
             return suspicious_imports, build_with
 
         for entry in pe.DIRECTORY_ENTRY_IMPORT:
-            dll_name = entry.dll.decode().lower()
+            dll_name = entry.dll.decode('utf-8', errors='replace').lower()
 
             for imp in entry.imports:
                 if not imp.name:
                     continue
 
-                func_name = imp.name.decode().lower()
+                func_name = imp.name.decode('utf-8', errors='replace').lower()
 
                 for lookup_dll in [dll_name, "unknown"]:
                     if lookup_dll in self.dll_function_map and func_name in self.dll_function_map[lookup_dll]:
@@ -230,7 +235,7 @@ class SecurityAnalyzer:
         ]
 
         for section in pe.sections:
-            section_name = section.Name.decode().rstrip('\x00')
+            section_name = _section_name(section)
             section_data = section.get_data()
             section_entropy = entropy_calculator(section_data)
 
@@ -254,6 +259,14 @@ class SecurityAnalyzer:
             })
 
         return sections_info
+
+def _section_name(section):
+    """Section names are raw 8-byte fields; packers put arbitrary bytes
+    there. latin-1 never fails, so one odd name can't discard the whole
+    PE analysis (get_pe_info used to return pe_info=None on a
+    UnicodeDecodeError here)."""
+    return section.Name.rstrip(b'\x00').decode('latin-1')
+
 
 _security_analyzer_cache = {}
 

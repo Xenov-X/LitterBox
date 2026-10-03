@@ -28,7 +28,7 @@
 </div>
 
 <!-- Status grid -->
-{{ status_grid_3(yara_detections + checkplz_detections, 'Scan Duration', scan_duration) }}
+{{ status_grid_3(yara_detections + checkplz_detections, 'Scan Duration', scan_duration, [analysis_results.yara, analysis_results.checkplz]) }}
 
 <!-- Scanner Results -->
 <div class="lb-panel">
@@ -36,10 +36,10 @@
     <table class="lb-table">
         {{ scanner_table_header() }}
         <tbody id="scannerResultsBody">
-            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches) }}
+            {{ scanner_yara_row(yara_detections, analysis_results.yara.matches, analysis_results.yara) }}
             <tr>
                 <td>CheckPlz</td>
-                {{ scanner_status_cell(checkplz_detections) }}
+                {{ scanner_status_cell(checkplz_detections, analysis_results.checkplz) }}
                 {{ scanner_count_cell(checkplz_detections) }}
                 <td class="lb-muted" style="font-size: 12px;">
                     {{ analysis_results.checkplz.findings.initial_threat if checkplz_detections else 'No signatures triggered' }}

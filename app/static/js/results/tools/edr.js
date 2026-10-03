@@ -149,6 +149,7 @@ function renderAlerts(results) {
         'blocked_by_av':            'EDR Block',
         'polling_alerts':           'Polling…',
         'partial':                  'Partial',
+        'executed':                 'Executed',
         'busy':                     'Busy',
         'agent_unreachable':        'Offline',
         'error':                    'Error',
@@ -160,6 +161,7 @@ function renderAlerts(results) {
         status === 'blocked_by_av' ? 'critical' :
         status === 'polling_alerts' ? 'info' :
         status === 'partial' ? 'medium' :
+        status === 'executed' ? 'info' :
         'critical'
     );
 
@@ -178,6 +180,19 @@ function renderAlerts(results) {
     // Body
     if (status === 'agent_unreachable') {
         target.innerHTML = errorPanel('Whiskers agent unreachable', { error: results.error, agent_url: results.agent_url });
+        return;
+    }
+
+    if (status === 'busy') {
+        target.innerHTML = errorPanel(
+            'Whiskers agent busy with another run — the payload was not executed',
+            results.error ? { error: results.error } : null
+        );
+        return;
+    }
+
+    if (status === 'error') {
+        target.innerHTML = errorPanel(`EDR run failed: ${results.error || 'unknown error'}`, results.error_details || null);
         return;
     }
 
@@ -205,8 +220,7 @@ function renderAlerts(results) {
                     <span class="lb-strong">Correlating alerts…</span>
                 </div>
                 <span class="lb-muted" style="font-size: 12px;">Polling every ${POLL_INTERVAL_MS / 1000}s, max ${max}s window.${blockedHint}</span>
-            </div>
-            <style>@keyframes lb-spin { to { transform: rotate(360deg); } }</style>`;
+            </div>`;
         return;
     }
 

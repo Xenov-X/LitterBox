@@ -117,15 +117,65 @@ export function codeBlock(content, opts = {}) {
         </div>`;
 }
 
-/** Build a summary scanner row (used inside #scannerResultsBody). */
-export function summaryRow({ name, triggered, count, detail }) {
+/**
+ * Build a summary scanner row (used inside #scannerResultsBody).
+ * `state` overrides the Detected/Clean verdict for scanners that didn't
+ * produce one: 'failed' (scan errored / never ran) or 'pending'.
+ */
+export function summaryRow({ name, triggered, count, detail, state }) {
+    const verdict =
+        state === 'failed'  ? tag('medium', 'Failed') :
+        state === 'pending' ? tag('info', 'Pending') :
+        tag(triggered ? 'critical' : 'clean', triggered ? 'Detected' : 'Clean');
     return `
         <tr>
             <td>${escapeHtml(name)}</td>
-            <td>${tag(triggered ? 'critical' : 'clean', triggered ? 'Detected' : 'Clean')}</td>
-            <td class="lb-mono" style="color: ${triggered ? 'var(--lb-accent)' : 'var(--lb-text-mute)'};">${count}</td>
+            <td>${verdict}</td>
+            <td class="lb-mono" style="color: ${triggered ? 'var(--lb-accent)' : 'var(--lb-text-mute)'};">${escapeHtml(String(count ?? 0))}</td>
             <td class="lb-muted" style="font-size: 12px;">${escapeHtml(detail)}</td>
         </tr>`;
+}
+
+/**
+ * True when a tool result carries no verdict at all (the scan errored,
+ * timed out, or was skipped). 'failed' (tool exited non-zero) is NOT
+ * included: its parsed findings are still rendered, under a warning
+ * banner added by the tools.js registry.
+ */
+export function scanFailed(result) {
+    const s = result && result.status;
+    return s === 'error' || s === 'timeout' || s === 'skipped';
+}
+
+/** Error panel for a scan that didn't produce a verdict (error/timeout/skipped). */
+export function failurePanel(result) {
+    const message = result.error || result.reason || `Scan ${result.status || 'failed'}`;
+    return errorPanel(message, result.error_details || result.errors || null);
+}
+
+/** Warning banner prepended to a tool pane whose scanner exited non-zero. */
+export function nonZeroExitBanner(result) {
+    const detail = typeof result.errors === 'string' && result.errors.trim()
+        ? `: ${result.errors.trim().slice(0, 300)}` : '';
+    return `
+        <div class="lb-empty threats" style="flex-direction: row; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 12px;">
+            ${ICON.warn}<span>Scanner exited with a non-zero status — results may be incomplete${escapeHtml(detail)}</span>
+        </div>`;
+}
+
+// Moneta fields that count as detections. Mirrors MONETA_DETECTION_KEYS in
+// app/utils/risk_analyzer.py; only used for results saved before the
+// analyzer started emitting findings.detection_count.
+const MONETA_DETECTION_KEYS = [
+    'total_private_rwx', 'total_private_rx', 'total_modified_code',
+    'total_heap_executable', 'total_modified_pe_header', 'total_inconsistent_x',
+    'total_missing_peb', 'total_mismatching_peb', 'total_threads_non_image',
+];
+
+export function monetaDetectionCount(f) {
+    if (!f) return 0;
+    if (typeof f.detection_count === 'number') return f.detection_count;
+    return MONETA_DETECTION_KEYS.reduce((n, k) => n + (Number(f[k]) || 0), 0);
 }
 
 /** Re-export escapeHtml so tool modules import from one place. */

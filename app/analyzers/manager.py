@@ -240,7 +240,17 @@ class AnalysisManager:
         """Handle PID-based analysis"""
         try:
             process, pid = self._validate_process(target, True)
-            results = self._run_analyzers(self.dynamic_analyzers, pid, 'dynamic')
+            # RedEdr attaches ETW tracing before the payload is spawned, so it
+            # can't observe an already-running PID. Report it as skipped
+            # rather than "completed, 0 events".
+            analyzers = {k: v for k, v in self.dynamic_analyzers.items() if k != 'rededr'}
+            results = self._run_analyzers(analyzers, pid, 'dynamic')
+            if 'rededr' in self.dynamic_analyzers and isinstance(results, dict) \
+                    and results.get('status') != 'error':
+                results['rededr'] = {
+                    'status': 'skipped',
+                    'reason': 'RedEdr traces payloads it launches; not available for PID analysis',
+                }
             results['analysis_metadata'] = self._create_metadata(start_time, cmd_args=[])
             return results
         except Exception as e:

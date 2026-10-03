@@ -10,17 +10,23 @@ from flask import Flask, render_template, request
 init(autoreset=True)
 
 
+# Repository root (the directory holding Config/, Scanners/, Utils/).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def load_config():
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', 'config.yaml')
+    config_path = os.path.join(REPO_ROOT, 'Config', 'config.yaml')
     with open(config_path, 'r') as config_file:
         return yaml.safe_load(config_file)
 
 
-def create_app():
+def create_app(config=None):
+    """Build the Flask app. `config` overrides Config/config.yaml (tests)."""
     app = Flask(__name__)
 
     # Load configuration from YAML
-    config = load_config()
+    if config is None:
+        config = load_config()
     app.config.update(config)
     app.name = config['application']['name']
 

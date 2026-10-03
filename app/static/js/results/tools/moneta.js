@@ -1,23 +1,18 @@
 // app/static/js/results/tools/moneta.js
-import { errorPanel, cleanState, statRow, panel, kvGrid, codeBlock, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, statRow, panel, kvGrid, codeBlock, escapeHtml, scanFailed, failurePanel, monetaDetectionCount } from './_shared.js';
 
 export default {
     id: 'moneta',
     elementId: 'monetaResults',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 
         const f = results.findings || {};
-        const suspiciousMetrics = [
-            f.total_private_rx, f.total_private_rwx, f.total_modified_code,
-            f.total_inconsistent_x, f.total_heap_executable, f.total_modified_pe_header,
-            f.total_missing_peb, f.total_mismatching_peb, f.total_threads_non_image,
-        ];
-        const isClean = suspiciousMetrics.every(v => !v);
+        const isClean = monetaDetectionCount(f) === 0;
 
         let html = '';
 

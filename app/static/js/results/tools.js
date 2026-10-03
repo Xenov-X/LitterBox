@@ -27,6 +27,7 @@ import hsbTool           from './tools/hsb.js';
 import rededrTool        from './tools/rededr.js';
 import edrTool           from './tools/edr.js';
 import summaryTool       from './tools/summary.js';
+import { nonZeroExitBanner } from './tools/_shared.js';
 
 const modules = [
     yaraTool,
@@ -62,6 +63,11 @@ export const tools = Object.fromEntries(modules.map(mod => {
                 return;
             }
             mod.render(results, ctx);
+            // A scanner that exited non-zero may have produced partial
+            // output; flag it so an empty result isn't read as "clean".
+            if (results && results.status === 'failed' && mod.id !== 'summary') {
+                ctx.element.insertAdjacentHTML('afterbegin', nonZeroExitBanner(results));
+            }
         },
     };
     return [mod.id, entry];

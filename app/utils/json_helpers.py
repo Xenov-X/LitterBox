@@ -3,6 +3,8 @@
 import json
 import os
 
+from .risk_analyzer import moneta_detection_count
+
 
 def load_json_file(filepath):
     """Safely load a JSON file. Returns None if missing or unreadable."""
@@ -52,20 +54,17 @@ def extract_detection_counts(results):
         pesieve_findings = results.get('pe_sieve', {}).get('findings', {})
         counts['pesieve'] = int(pesieve_findings.get('total_suspicious', 0) or 0)
 
-        moneta_findings = results.get('moneta', {}).get('findings', {})
-        non_detection_fields = ['total_regions', 'total_unsigned_modules', 'scan_duration']
-        counts['moneta'] = sum(
-            int(moneta_findings.get(key, 0) or 0)
-            for key in moneta_findings
-            if key.startswith('total_') and key not in non_detection_fields
-        )
+        counts['moneta'] = moneta_detection_count(results.get('moneta', {}).get('findings', {}))
 
         patriot_findings = results.get('patriot', {}).get('findings', {}).get('findings', [])
         counts['patriot'] = len(patriot_findings) if isinstance(patriot_findings, list) else 0
 
         hsb_findings = results.get('hsb', {}).get('findings', {})
         if hsb_findings and hsb_findings.get('detections'):
-            counts['hsb'] = len(hsb_findings['detections'][0].get('findings', []))
+            counts['hsb'] = sum(
+                len(detection.get('findings') or [])
+                for detection in hsb_findings['detections']
+            )
 
     except (TypeError, ValueError, IndexError):
         pass

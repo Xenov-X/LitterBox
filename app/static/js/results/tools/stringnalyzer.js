@@ -1,5 +1,5 @@
 // app/static/js/results/tools/stringnalyzer.js
-import { errorPanel, statRow } from './_shared.js';
+import { errorPanel, statRow, scanFailed, failurePanel } from './_shared.js';
 import { renderSection } from '../renderers.js';
 
 export default {
@@ -8,8 +8,8 @@ export default {
     statsElementId: 'StringnalyzerStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 

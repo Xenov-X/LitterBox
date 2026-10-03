@@ -1,5 +1,5 @@
 // app/static/js/results/tools/checkplz.js
-import { errorPanel, cleanState, statRow, panel, kvGrid, codeBlock } from './_shared.js';
+import { errorPanel, cleanState, statRow, panel, kvGrid, codeBlock, scanFailed, failurePanel } from './_shared.js';
 
 export default {
     id: 'checkplz',
@@ -7,8 +7,8 @@ export default {
     statsElementId: 'threatCheckStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 

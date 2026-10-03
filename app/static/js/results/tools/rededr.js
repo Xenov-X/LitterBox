@@ -1,5 +1,5 @@
 // app/static/js/results/tools/rededr.js
-import { errorPanel, cleanState, threatState, statRow, panel, kvGrid, tag, escapeHtml } from './_shared.js';
+import { errorPanel, cleanState, threatState, statRow, panel, kvGrid, tag, escapeHtml, scanFailed, failurePanel } from './_shared.js';
 import { formatBytes } from '../renderers.js';
 
 // Windows FILETIME → ISO-ish local time. RedEdr emits
@@ -47,8 +47,8 @@ export default {
     statsElementId: 'redEdrStats',
 
     render(results, ctx) {
-        if (results.status === 'error') {
-            ctx.element.innerHTML = errorPanel(results.error, results.error_details);
+        if (scanFailed(results)) {
+            ctx.element.innerHTML = failurePanel(results);
             return;
         }
 

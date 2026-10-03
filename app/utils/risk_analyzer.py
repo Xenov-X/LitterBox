@@ -13,13 +13,42 @@ class RiskCalculator:
         'INFO': 5,
     }
 
-    NUMERIC_SEVERITY_MAP = {
-        100: 'CRITICAL',
-        80: 'HIGH',
-        50: 'MEDIUM',
-        20: 'LOW',
-        5: 'INFO',
-    }
+    # Lower bound of each bucket for numeric `score` / `severity` meta.
+    # Bundled rules use 60/65/70/75/80/85/90/100 — an exact-value map sent
+    # everything but 100/80/50/20/5 to MEDIUM (so score=90 < score=80).
+    NUMERIC_SEVERITY_THRESHOLDS = (
+        (90, 'CRITICAL'),
+        (70, 'HIGH'),
+        (40, 'MEDIUM'),
+        (15, 'LOW'),
+    )
+
+    @classmethod
+    def severity_label(cls, severity):
+        """Map a YARA severity (int, numeric string, or word) to a bucket."""
+        if isinstance(severity, bool):
+            return 'MEDIUM'
+        if isinstance(severity, str):
+            text = severity.strip()
+            if text.lstrip('-').isdigit():
+                severity = int(text)
+            else:
+                text = text.upper()
+                return text if text in cls.SEVERITY_WEIGHTS else 'MEDIUM'
+        if isinstance(severity, (int, float)):
+            for threshold, label in cls.NUMERIC_SEVERITY_THRESHOLDS:
+                if severity >= threshold:
+                    return label
+            return 'INFO'
+        return 'MEDIUM'
+
+    @classmethod
+    def has_high_severity(cls, matches):
+        """True if any match is HIGH or CRITICAL."""
+        return any(
+            cls.severity_label((m.get('metadata') or {}).get('severity', 'MEDIUM')) in ('HIGH', 'CRITICAL')
+            for m in matches or []
+        )
 
     @classmethod
     def calculate_yara_risk(cls, matches):
@@ -30,16 +59,10 @@ class RiskCalculator:
         severity_counts = {level: 0 for level in cls.SEVERITY_WEIGHTS}
 
         for match in matches:
-            meta = match.get('metadata', {})
-            severity = meta.get('severity', 'MEDIUM')
-
-            if isinstance(severity, int):
-                severity = cls.NUMERIC_SEVERITY_MAP.get(severity, 'MEDIUM')
-            severity = severity.upper()
-
-            if severity in cls.SEVERITY_WEIGHTS:
-                severity_counts[severity] += 1
-                max_severity_score = max(max_severity_score, cls.SEVERITY_WEIGHTS[severity])
+            meta = match.get('metadata') or {}
+            severity = cls.severity_label(meta.get('severity', 'MEDIUM'))
+            severity_counts[severity] += 1
+            max_severity_score = max(max_severity_score, cls.SEVERITY_WEIGHTS[severity])
 
         total_score = 0
         risk_factors = []
@@ -84,7 +107,12 @@ class RiskCalculator:
 
         pe_risk += min(high_entropy_sections * 10 + very_high_entropy_sections * 20, 40)
 
-        suspicious_imports = pe_info.get('suspicious_imports', [])
+        # Imports the Go / Rust runtime always pulls in (LoadLibrary,
+        # GetProcAddress, ...) say nothing about the payload — skip them.
+        suspicious_imports = [
+            imp for imp in pe_info.get('suspicious_imports', [])
+            if not imp.get('is_runtime_import')
+        ]
         if suspicious_imports:
             critical_functions = {
                 'createremotethread', 'virtualallocex', 'writeprocessmemory',
@@ -120,6 +148,32 @@ class RiskCalculator:
                     risk_factors.append("PE checksum mismatch observed")
 
         return pe_risk, risk_factors
+
+
+# Moneta finding counters that represent detections. Shared by the risk
+# score, json_helpers.extract_detection_counts and the Moneta analyzer's
+# `detection_count`. Not included: total_abnormal_private_exec (a superset
+# of private_rwx + private_rx) and total_unsigned_modules (informational).
+MONETA_DETECTION_KEYS = (
+    'total_private_rwx',
+    'total_private_rx',
+    'total_modified_code',
+    'total_heap_executable',
+    'total_modified_pe_header',
+    'total_inconsistent_x',
+    'total_missing_peb',
+    'total_mismatching_peb',
+    'total_threads_non_image',
+)
+
+
+def moneta_detection_count(moneta_findings):
+    """Number of Moneta detections in a findings dict."""
+    if not moneta_findings:
+        return 0
+    if isinstance(moneta_findings.get('detection_count'), int):
+        return moneta_findings['detection_count']
+    return sum(int(moneta_findings.get(key, 0) or 0) for key in MONETA_DETECTION_KEYS)
 
 
 def calculate_yara_risk(matches):
@@ -187,8 +241,9 @@ def calculate_risk(analysis_type='process', file_info=None,
         risk_factors.extend([f"Static: {factor}" for factor in static_factors])
         risk_score += (static_risk / 100) * weights['static'] * 100
 
+    high_signal = False
     if analysis_type in ['file', 'process'] and dynamic_results:
-        dynamic_risk, dynamic_factors = _calculate_dynamic_risk(dynamic_results, analysis_type)
+        dynamic_risk, dynamic_factors, high_signal = _calculate_dynamic_risk(dynamic_results, analysis_type)
         risk_factors.extend([f"Dynamic: {factor}" for factor in dynamic_factors])
         risk_score += (dynamic_risk / 100) * weights['dynamic'] * 100
 
@@ -200,7 +255,7 @@ def calculate_risk(analysis_type='process', file_info=None,
         risk_factors.extend([f"EDR: {factor}" for factor in edr_factors])
         risk_score += edr_score
 
-    risk_score = _normalize_risk_score(risk_score, analysis_type, dynamic_results, risk_factors)
+    risk_score = _normalize_risk_score(risk_score, analysis_type, dynamic_results, high_signal)
 
     return round(min(max(risk_score, 0), 100), 2), risk_factors
 
@@ -321,6 +376,11 @@ def _calculate_static_risk(static_results):
 
 
 def _calculate_dynamic_risk(dynamic_results, analysis_type):
+    """Return (score, factors, high_signal).
+
+    `high_signal` is True when any dynamic scanner produced a high or
+    critical finding; process-mode scores are capped at 75 without one.
+    """
     dynamic_risk = 0
     risk_factors = []
 
@@ -329,6 +389,7 @@ def _calculate_dynamic_risk(dynamic_results, analysis_type):
     if yara_score > 0:
         dynamic_risk += yara_score
         risk_factors.extend(yara_factors)
+    high_signal = RiskCalculator.has_high_severity(yara_matches)
 
     pesieve_findings = dynamic_results.get('pe_sieve', {}).get('findings', {})
     pesieve_suspicious = int(pesieve_findings.get('total_suspicious', 0))
@@ -342,11 +403,14 @@ def _calculate_dynamic_risk(dynamic_results, analysis_type):
         risk_factors.append(f"PE-Sieve observed {pesieve_suspicious} memory modifications")
 
     dynamic_risk += _calculate_memory_anomaly_risk(dynamic_results, analysis_type, risk_factors)
-    dynamic_risk += _calculate_behavior_risk(dynamic_results, analysis_type, risk_factors)
-    dynamic_risk += _calculate_hsb_risk(dynamic_results, analysis_type, risk_factors)
-    dynamic_risk += _calculate_rededr_risk(dynamic_results, analysis_type, risk_factors)
 
-    return dynamic_risk, risk_factors
+    behavior_score, behavior_high = _calculate_behavior_risk(dynamic_results, analysis_type, risk_factors)
+    hsb_score, hsb_high = _calculate_hsb_risk(dynamic_results, analysis_type, risk_factors)
+    rededr_score = _calculate_rededr_risk(dynamic_results, analysis_type, risk_factors)
+    dynamic_risk += behavior_score + hsb_score + rededr_score
+    high_signal = high_signal or behavior_high or hsb_high or rededr_score > 0
+
+    return dynamic_risk, risk_factors, high_signal
 
 
 _EDR_HIGH_SEVERITY = {'high', 'critical'}
@@ -459,6 +523,7 @@ def _calculate_memory_anomaly_risk(dynamic_results, analysis_type, risk_factors)
         'total_modified_code': 12 if analysis_type == 'file' else 10,
         'total_heap_executable': 10,
         'total_modified_pe_header': 10,
+        'total_threads_non_image': 10,
         'total_private_rx': 8,
         'total_inconsistent_x': 8,
         'total_missing_peb': 5,
@@ -482,15 +547,16 @@ def _calculate_memory_anomaly_risk(dynamic_results, analysis_type, risk_factors)
 
 
 def _calculate_behavior_risk(dynamic_results, analysis_type, risk_factors):
+    """Patriot findings. Returns (score, high_signal)."""
     patriot_findings = dynamic_results.get('patriot', {}).get('findings', {})
     if not patriot_findings:
-        return 0
+        return 0, False
 
     behaviors = patriot_findings.get('findings', [])
     behavior_count = len(behaviors)
 
     if behavior_count == 0:
-        return 0
+        return 0, False
 
     severity_scores = {
         'critical': 25 if analysis_type == 'file' else 20,
@@ -500,50 +566,65 @@ def _calculate_behavior_risk(dynamic_results, analysis_type, risk_factors):
     }
 
     behavior_score = 0
+    high_signal = False
     for behavior in behaviors:
-        severity = behavior.get('severity', 'low')
+        # The Patriot parser stores the finding's level under `level`
+        # (e.g. "CRITICAL"); `severity` is accepted for older results.
+        severity = str(behavior.get('level') or behavior.get('severity') or 'low').lower()
         behavior_score += severity_scores.get(severity, 5)
+        high_signal = high_signal or severity in ('high', 'critical')
 
     risk_factors.append(f"{behavior_count} weighted runtime indicators observed")
-    return min(behavior_score, 35)
+    return min(behavior_score, 35), high_signal
+
+
+# HSB severities as emitted by HSBAnalyzer.SEVERITY_LEVELS.
+_HSB_LABELS = {1: 'LOW', 2: 'MID', 3: 'HIGH', 4: 'CRITICAL'}
 
 
 def _calculate_hsb_risk(dynamic_results, analysis_type, risk_factors):
+    """Hunt-Sleeping-Beacons findings. Returns (score, high_signal).
+
+    `max_severity` is 1 (LOW) .. 4 (CRITICAL) — see HSBAnalyzer.
+    """
     hsb_findings = dynamic_results.get('hsb', {}).get('findings', {})
     if not (hsb_findings and hsb_findings.get('detections')):
-        return 0
+        return 0, False
 
     total_hsb_score = 0
+    high_signal = False
     for detection in hsb_findings['detections']:
         if not detection.get('findings'):
             continue
 
         count = len(detection['findings'])
-        severity = detection.get('max_severity', 0)
+        try:
+            severity = int(detection.get('max_severity') or 1)
+        except (TypeError, ValueError):
+            severity = 1
+        severity = min(max(severity, 1), 4)
 
         if analysis_type == 'file':
-            severity_multiplier = 1 + (severity * 0.5)
+            severity_multiplier = 1 + ((severity - 1) * 0.5)
             detection_score = min(count * 15 * severity_multiplier, 40)
         else:
-            severity_scores = {0: 10, 1: 15, 2: 20}
-            max_scores = {0: 20, 1: 25, 2: 35}
-            detection_score = min(
-                count * severity_scores.get(severity, 10),
-                max_scores.get(severity, 20),
-            )
+            severity_scores = {1: 10, 2: 15, 3: 20, 4: 25}
+            max_scores = {1: 20, 2: 25, 3: 35, 4: 35}
+            detection_score = min(count * severity_scores[severity], max_scores[severity])
 
         total_hsb_score += detection_score
 
-        severity_text = ["LOW", "MID", "HIGH"][min(severity, 2)]
-        if severity >= 2:
-            risk_factors.append(f"Critical: {count} high-severity memory operations observed")
+        severity_text = _HSB_LABELS[severity]
+        if severity >= 3:
+            high_signal = True
+            risk_factors.append(f"Critical: {count} {severity_text} severity memory operations observed")
         else:
             risk_factors.append(f"{count} {severity_text} severity memory operations observed")
 
-    return min(total_hsb_score, 45 if analysis_type == 'file' else 35)
+    return min(total_hsb_score, 45 if analysis_type == 'file' else 35), high_signal
 
 
-def _normalize_risk_score(risk_score, analysis_type, dynamic_results, risk_factors):
+def _normalize_risk_score(risk_score, analysis_type, dynamic_results, high_signal):
     if analysis_type == 'file':
         base_score = min(max(risk_score, 0), 100)
         if base_score > 75:
@@ -551,12 +632,15 @@ def _normalize_risk_score(risk_score, analysis_type, dynamic_results, risk_facto
     else:
         yara_matches = dynamic_results.get('yara', {}).get('matches', []) if dynamic_results else []
         pesieve_findings = dynamic_results.get('pe_sieve', {}).get('findings', {}) if dynamic_results else {}
-        pesieve_suspicious = int(pesieve_findings.get('total_suspicious', 0))
+        pesieve_suspicious = int(pesieve_findings.get('total_suspicious', 0) or 0)
 
         if len(yara_matches) == 0 and pesieve_suspicious <= 1:
             risk_score = min(risk_score, 65)
 
-        if all(f.lower().find('high') == -1 for f in risk_factors):
+        # Only a high/critical finding (YARA, HSB, Patriot, Defender) lifts
+        # a process score above 75. This used to be a substring test for
+        # "high" over the factor text, which "critical" factors failed.
+        if not high_signal:
             risk_score = min(risk_score, 75)
 
     return risk_score

@@ -5,7 +5,20 @@
 //
 // Receives the full data.results object, not a single tool's results.
 
-import { panel, kvGrid, summaryRow, escapeHtml } from './_shared.js';
+import { panel, kvGrid, summaryRow, escapeHtml, scanFailed, monetaDetectionCount } from './_shared.js';
+
+// Row state for a scanner result: 'failed' when the scan produced no
+// verdict (or exited non-zero with nothing parsed), otherwise undefined.
+function rowState(result, count) {
+    if (scanFailed(result)) return 'failed';
+    if (result && result.status === 'failed' && !count) return 'failed';
+    return undefined;
+}
+
+function failureDetail(result) {
+    return result.error || result.reason ||
+        (result.status === 'failed' ? 'Scanner exited non-zero; no findings parsed' : `Scan ${result.status}`);
+}
 
 export default {
     id: 'summary',
@@ -17,8 +30,10 @@ export default {
     statsElementId: 'scannerResultsBody',
 
     render(results, ctx) {
-        // Early-termination case
-        if (results.status === 'early_termination') {
+        // Early-termination / whole-run failure case
+        if (results.status === 'early_termination' || results.status === 'error') {
+            const isEarly = results.status === 'early_termination';
+            const headline = isEarly ? 'Process terminated before analysis could complete' : 'Analysis failed';
             const totalEl = document.getElementById('totalDetections');
             const overEl  = document.getElementById('overallStatus');
             if (totalEl) totalEl.textContent = '-';
@@ -28,8 +43,8 @@ export default {
                 ctx.statsElement.innerHTML = `
                     <tr>
                         <td colspan="4" style="padding: 16px; text-align: center;">
-                            <div class="lb-strong" style="color: var(--lb-accent); margin-bottom: 4px;">Process terminated before analysis could complete</div>
-                            <div class="lb-muted" style="font-size: 12px;">${escapeHtml(results.error || 'Process terminated early')}${
+                            <div class="lb-strong" style="color: var(--lb-accent); margin-bottom: 4px;">${escapeHtml(headline)}</div>
+                            <div class="lb-muted" style="font-size: 12px;">${escapeHtml(results.error || (isEarly ? 'Process terminated early' : 'Analysis failed'))}${
                                 results.analysis_metadata?.total_duration
                                     ? ` (terminated after ${results.analysis_metadata.total_duration}s)`
                                     : ''
@@ -43,7 +58,7 @@ export default {
                 targetEl.innerHTML = `
                     <div class="lb-empty threats" style="flex-direction: column; align-items: flex-start; padding: 12px 16px;">
                         <div class="lb-strong">Analysis Failed</div>
-                        <div class="lb-muted" style="font-size: 12px;">Process terminated before analysis could complete. No results available.</div>
+                        <div class="lb-muted" style="font-size: 12px;">${escapeHtml(headline)}. No results available.</div>
                     </div>`;
             }
             return;
@@ -69,78 +84,85 @@ export default {
 
         // Build scanner table rows
         let totalDetections = 0;
+        let incomplete = false;
         const rows = [];
+        const push = (result, row) => {
+            const state = rowState(result, row.count);
+            if (state === 'failed') {
+                incomplete = true;
+                rows.push(summaryRow({ ...row, state, detail: failureDetail(result) }));
+            } else {
+                rows.push(summaryRow(row));
+            }
+        };
 
         if (results.yara) {
             const matches = Array.isArray(results.yara.matches) ? results.yara.matches : [];
             totalDetections += matches.length;
-            rows.push(summaryRow({
+            push(results.yara, {
                 name: 'YARA',
                 triggered: matches.length > 0,
                 count: matches.length,
                 detail: matches.length > 0 ? `${matches.length} rule match${matches.length === 1 ? '' : 'es'}` : 'No rules matched',
-            }));
+            });
         }
 
         if (results.pe_sieve) {
             const susp = results.pe_sieve.findings?.total_suspicious || 0;
             totalDetections += susp;
-            rows.push(summaryRow({
+            push(results.pe_sieve, {
                 name: 'PE-sieve',
                 triggered: susp > 0,
                 count: susp,
                 detail: susp > 0 ? `${susp} memory modification${susp === 1 ? '' : 's'} observed` : 'No memory modifications observed',
-            }));
+            });
         }
 
         if (results.moneta) {
             const f = results.moneta.findings || {};
-            const susp = (f.total_private_rwx || 0) + (f.total_private_rx || 0) + (f.total_modified_code || 0)
-                       + (f.total_heap_executable || 0) + (f.total_modified_pe_header || 0)
-                       + (f.total_inconsistent_x || 0) + (f.total_threads_non_image || 0)
-                       + (f.total_missing_peb || 0) + (f.total_mismatching_peb || 0);
+            const susp = monetaDetectionCount(f);
             const isClean = susp === 0;
             totalDetections += susp;
-            rows.push(summaryRow({
+            push(results.moneta, {
                 name: 'Moneta',
                 triggered: !isClean,
                 count: susp,
                 detail: isClean ? 'No anomalies observed' : 'Memory anomalies observed',
-            }));
+            });
         }
 
         if (results.checkplz) {
             const f = results.checkplz.findings || {};
             const hasDetection = !!f.scan_results?.detection_offset;
             if (hasDetection) totalDetections++;
-            rows.push(summaryRow({
+            push(results.checkplz, {
                 name: 'CheckPlz',
                 triggered: hasDetection,
                 count: hasDetection ? 1 : 0,
                 detail: hasDetection ? (f.initial_threat || 'Signature triggered') : 'No signatures triggered',
-            }));
+            });
         }
 
         if (results.patriot) {
             const total = results.patriot.findings?.findings?.length || 0;
             totalDetections += total;
-            rows.push(summaryRow({
+            push(results.patriot, {
                 name: 'Patriot',
                 triggered: total > 0,
                 count: total,
                 detail: total > 0 ? `${total} indicator${total === 1 ? '' : 's'} observed` : 'No indicators observed',
-            }));
+            });
         }
 
         if (results.hsb) {
             const total = results.hsb.findings?.summary?.total_findings || 0;
             totalDetections += total;
-            rows.push(summaryRow({
+            push(results.hsb, {
                 name: 'Hunt-Sleeping-Beacons',
                 triggered: total > 0,
                 count: total,
                 detail: total > 0 ? 'Sleep-pattern indicators observed' : 'No sleep-pattern indicators',
-            }));
+            });
         }
 
         if (results.edr) {
@@ -178,11 +200,20 @@ export default {
             else if (status === 'executed')              detail = 'Execution complete';
             else                                        detail = 'No alerts raised';
 
+            // Statuses where the payload never ran (or alerts were never
+            // queried) carry no verdict — never render them as Clean.
+            const NO_VERDICT = new Set(['agent_unreachable', 'busy', 'error']);
+            let state;
+            if (isPolling) state = 'pending';
+            else if (NO_VERDICT.has(status) || (status === 'partial' && totalAlerts === 0)) state = 'failed';
+            if (state === 'failed') incomplete = true;
+
             rows.push(summaryRow({
                 name: r.display_name || r.profile || 'EDR',
                 triggered: isTerminal && totalAlerts > 0,
                 count: totalAlerts,
                 detail,
+                state,
             }));
         }
 
@@ -198,6 +229,11 @@ export default {
             if (edrPolling && totalDetections === 0) {
                 overEl.textContent = 'Correlating…';
                 overEl.style.color = 'var(--lb-accent-soft)';
+            } else if (incomplete && totalDetections === 0) {
+                // At least one scanner produced no verdict: "Clean" would
+                // claim more than the run actually showed.
+                overEl.textContent = 'Incomplete';
+                overEl.style.color = 'var(--lb-sev-medium)';
             } else {
                 overEl.textContent = totalDetections > 0 ? 'Detections' : 'Clean';
                 overEl.style.color = totalDetections > 0 ? 'var(--lb-accent)' : 'var(--lb-sev-low)';

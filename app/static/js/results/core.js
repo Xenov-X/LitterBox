@@ -70,6 +70,27 @@ class AnalysisCore {
         }
     }
 
+    renderResults(results) {
+        // Summary first, then each tool — isolate each so a single broken
+        // renderer doesn't suppress the rest.
+        if (tools.summary) {
+            try {
+                tools.summary.render(results);
+            } catch (err) {
+                console.error('[results] summary render failed:', err);
+            }
+        }
+        Object.entries(results).forEach(([toolKey, toolResults]) => {
+            if (toolResults && tools[toolKey] && toolKey !== 'summary') {
+                try {
+                    tools[toolKey].render(toolResults);
+                } catch (err) {
+                    console.error(`[results] ${toolKey} render failed:`, err);
+                }
+            }
+        });
+    }
+
     async startAnalysis() {
         this.updateStatusIcon('running');
         this.elements.analysisStatus.textContent = 'Running analysis...';
@@ -93,7 +114,12 @@ class AnalysisCore {
                 })
             });
 
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch {
+                data = { status: 'error', error: `Server returned HTTP ${response.status} (non-JSON response)` };
+            }
 
             // Handle early termination
             if (data.status === 'early_termination') {
@@ -117,6 +143,32 @@ class AnalysisCore {
                 return;
             }
             
+            // Failed request: HTTP error, analysis error envelope, or an EDR
+            // dispatch that never ran (busy / agent_unreachable). Never fall
+            // through to "Analysis completed" — an empty result set here
+            // means "no verdict", not "clean".
+            const failed = !response.ok || ['error', 'busy', 'agent_unreachable'].includes(data.status);
+            if (failed) {
+                this.updateTimer();
+                this.stopTimer();
+                this.updateStatusIcon('error');
+                const reason = data.error || data.message
+                    || data.results?.edr?.error || `HTTP ${response.status}`;
+                this.elements.analysisStatus.textContent = `Analysis failed: ${reason}`;
+
+                if (data.results) {
+                    // EDR 409/502 responses still carry a result envelope —
+                    // render it so the tabs show what the agent reported.
+                    this.renderResults(data.results);
+                } else if (tools.summary) {
+                    tools.summary.render({
+                        status: 'error',
+                        error: typeof data.details === 'string' && data.details ? `${reason}: ${data.details}` : reason,
+                    });
+                }
+                return;
+            }
+
             // Normal completion flow.
             //
             // Special-case EDR runs that are still in their Phase-2 alert
@@ -135,26 +187,7 @@ class AnalysisCore {
                 this.updateStageToComplete();
             }
 
-            // First update the summary with all results
-            if (tools.summary && data.results) {
-                try {
-                    tools.summary.render(data.results);
-                } catch (err) {
-                    console.error('[results] summary render failed:', err);
-                }
-            }
-
-            // Then process individual tool results — isolate each so a
-            // single broken renderer doesn't suppress the rest.
-            Object.entries(data.results || {}).forEach(([toolKey, results]) => {
-                if (results && tools[toolKey] && toolKey !== 'summary') {
-                    try {
-                        tools[toolKey].render(results);
-                    } catch (err) {
-                        console.error(`[results] ${toolKey} render failed:`, err);
-                    }
-                }
-            });
+            this.renderResults(data.results || {});
         } catch (error) {
             this.stopTimer();
             this.updateStatusIcon('error');

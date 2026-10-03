@@ -1,6 +1,17 @@
 # app/analyzers/dynamic/moneta_analyzer.py
 import re
 from ..base import BaseSubprocessAnalyzer
+from ...utils.risk_analyzer import moneta_detection_count
+
+# Messages that abort the scan of the target. Moneta also prints non-fatal
+# warnings ("failed to grant SeDebug", "failed to query working set at ...",
+# region-dump failures) that must not mark a completed scan as failed.
+_FAILURE_LINE = re.compile(
+    r'failed to open handle to PID|failed to map address space of'
+    r'|cancelling scan of process|failed to create process list snapshot',
+    re.I,
+)
+_PROCESS_HEADER = re.compile(r'^(\S.*?)\s*:\s*(\d+)\s*:\s*(x64|x86|Wow64)\s*:\s*(.+)$')
 
 
 class MonetaAnalyzer(BaseSubprocessAnalyzer):
@@ -10,9 +21,21 @@ class MonetaAnalyzer(BaseSubprocessAnalyzer):
     use_timeout = False  # Moneta historically runs without an explicit timeout
 
     def _build_envelope(self, findings, returncode, stderr, stdout, target):
-        has_results = bool(stdout and findings.get('raw_output'))
+        # Moneta prints e.g. "... failed to open handle to PID 1234" and then
+        # "scan completed" with zero regions. Only a run that identified the
+        # target process (or finished without a failure line) is a scan.
+        failure = findings.get('failure')
+        scanned = findings.get('process_info') is not None or findings.get('scan_completed')
+        if failure or not scanned:
+            return {
+                'status': 'error',
+                'error': failure or 'Moneta produced no scan output',
+                'findings': findings,
+                'errors': stderr if stderr else None,
+            }
+        findings['detection_count'] = moneta_detection_count(findings)
         return {
-            'status': 'completed' if has_results else 'failed',
+            'status': 'completed',
             'findings': findings,
             'errors': stderr if stderr else None,
         }
@@ -35,6 +58,8 @@ class MonetaAnalyzer(BaseSubprocessAnalyzer):
             'total_threads_non_image': 0,
             'threads': [],
             'scan_duration': None,
+            'scan_completed': False,
+            'failure': None,
             'raw_output': output,
         }
 
@@ -45,15 +70,18 @@ class MonetaAnalyzer(BaseSubprocessAnalyzer):
                     continue
 
                 if 'scan completed' in line:
+                    findings['scan_completed'] = True
                     duration_match = re.search(r'(\d+\.\d+) second', line)
                     if duration_match:
                         findings['scan_duration'] = float(duration_match.group(1))
                     continue
 
-                if '.exe :' in line:
-                    process_match = re.match(
-                        r'(.+\.exe)\s*:\s*(\d+)\s*:\s*(x64|Wow64)\s*:\s*(.+)', line
-                    )
+                if findings['failure'] is None and _FAILURE_LINE.search(line):
+                    findings['failure'] = line.strip()
+                    continue
+
+                if findings['process_info'] is None and not line.startswith(' '):
+                    process_match = _PROCESS_HEADER.match(line)
                     if process_match:
                         findings['process_info'] = {
                             'name': process_match.group(1),
@@ -61,7 +89,7 @@ class MonetaAnalyzer(BaseSubprocessAnalyzer):
                             'arch': process_match.group(3),
                             'path': process_match.group(4),
                         }
-                    continue
+                        continue
 
                 if '|' not in line and 'Thread' not in line and '[TID' not in line:
                     continue
