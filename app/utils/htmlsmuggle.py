@@ -146,7 +146,7 @@ _THRESHOLD = 4
 _MAX_BYTES = 5 * 1024 * 1024   # 5 MiB cap on what we read for the scan
 
 # Pre-compile patterns once at import time.
-_RE_FLAGS = re.IGNORECASE | re.DOTALL
+_RE_FLAGS = re.IGNORECASE
 _COMPILED = [(w, re.compile(p, _RE_FLAGS), n, c) for w, p, n, c in _PATTERNS]
 _HIGH = [t for t in _COMPILED if t[0] >= 3]
 _LOW  = [t for t in _COMPILED if t[0] < 3]
