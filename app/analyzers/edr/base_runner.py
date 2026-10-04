@@ -63,10 +63,16 @@ class BaseEdrRunner(BaseAnalyzer):
 
     # ---- Public split-phase API ------------------------------------------
 
-    def run_exec(self, payload_path: str, executable_args: Optional[str] = None):
+    def run_exec(
+        self, payload_path: str, executable_args: Optional[str] = None,
+        exec_command: Optional[str] = None, archive_password: Optional[str] = None,
+    ):
         """Phase 1. Returns (phase_1_dict, continuation | None)."""
         try:
-            return self._run_exec_phase(payload_path, executable_args)
+            return self._run_exec_phase(
+                payload_path, executable_args,
+                exec_command=exec_command, archive_password=archive_password,
+            )
         except Exception as exc:
             logger.exception("EDR Phase 1 failed for %s", self.profile.name)
             return {
@@ -107,7 +113,10 @@ class BaseEdrRunner(BaseAnalyzer):
             continuation.get("file_name"),
         )
 
-    def _run_exec_phase(self, payload_path: str, executable_args: Optional[str]):
+    def _run_exec_phase(
+        self, payload_path: str, executable_args: Optional[str],
+        exec_command: Optional[str] = None, archive_password: Optional[str] = None,
+    ):
         if not os.path.isfile(payload_path):
             return {
                 "status": "error",
@@ -168,7 +177,8 @@ class BaseEdrRunner(BaseAnalyzer):
         run_start = datetime.now(timezone.utc)
         try:
             exec_outcome = self._run_locked(
-                file_bytes, filename, executable_args, hostname, run_start, info
+                file_bytes, filename, executable_args, hostname, run_start, info,
+                exec_command=exec_command, archive_password=archive_password,
             )
         finally:
             try:
@@ -237,13 +247,17 @@ class BaseEdrRunner(BaseAnalyzer):
             phase_1["summary"]["run_end"] = datetime.now(timezone.utc).isoformat()
             return phase_1, None
 
+        correlation_name = filename
+        if exec_command:
+            correlation_name = exec_command.split()[0]
+
         continuation = {
             "outcome": exec_outcome,
             "agent_info": info,
             "hostname": hostname,
             "run_start": run_start,
             "phase_1": phase_1,
-            "file_name": filename,
+            "file_name": correlation_name,
         }
         return phase_1, continuation
 
@@ -271,10 +285,15 @@ class BaseEdrRunner(BaseAnalyzer):
         hostname: str,
         run_start: datetime,
         agent_info: dict,
+        exec_command: Optional[str] = None,
+        archive_password: Optional[str] = None,
     ) -> dict:
-        launcher, default_args = self._resolve_launcher(self.config, filename)
-        if launcher and not executable_args:
-            executable_args = default_args
+        if exec_command:
+            launcher = None
+        else:
+            launcher, default_args = self._resolve_launcher(self.config, filename)
+            if launcher and not executable_args:
+                executable_args = default_args
 
         xor_key = secrets.randbelow(256)
         xor_table = bytes(b ^ xor_key for b in range(256))
@@ -284,9 +303,11 @@ class BaseEdrRunner(BaseAnalyzer):
                 file_bytes=xored,
                 filename=filename,
                 drop_path=self.profile.drop_path,
-                executable_args=executable_args,
+                executable_args=executable_args if not exec_command else None,
                 xor_key=xor_key,
                 launcher=launcher,
+                exec_command=exec_command,
+                archive_password=archive_password,
             )
         except AgentUnreachable as exc:
             return {**self._unreachable_result(exc), "_final": True}

@@ -114,6 +114,8 @@ def dispatch_split(
     config: dict,
     on_phase_2_done: Callable[[dict], None],
     executable_args: Optional[str] = None,
+    exec_command: Optional[str] = None,
+    archive_password: Optional[str] = None,
 ) -> dict:
     """Split-phase dispatch.
 
@@ -135,7 +137,10 @@ def dispatch_split(
         raise KeyError(f"unknown EDR profile: {profile_name!r}")
 
     runner = _make_runner(profile, config)
-    phase_1, continuation = runner.run_exec(payload_path, executable_args)
+    phase_1, continuation = runner.run_exec(
+        payload_path, executable_args,
+        exec_command=exec_command, archive_password=archive_password,
+    )
 
     if continuation is None:
         runner.cleanup()

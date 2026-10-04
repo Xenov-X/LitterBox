@@ -121,6 +121,19 @@ class AnalysisCore {
             // Args are saved per sample by the page that started the run.
             const args = loadArgs(this.fileHash);
 
+            // For archive uploads, the upload page stores exec_command and
+            // archive_password instead of args. Include them in the POST body
+            // so the backend can forward them to Whiskers.
+            const body = { args };
+            try {
+                const execCmd = localStorage.getItem(`archiveExecCmd:${this.fileHash}`);
+                const archivePw = localStorage.getItem(`archivePw:${this.fileHash}`);
+                if (execCmd) {
+                    body.exec_command = execCmd;
+                    body.archive_password = archivePw || '';
+                }
+            } catch { /* localStorage unavailable */ }
+
             // POST to the same path the page was loaded from. This naturally
             // handles the EDR case (/analyze/edr/<profile>/<hash>) without
             // a special branch.
@@ -129,9 +142,7 @@ class AnalysisCore {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    args // Dynamically include the arguments retrieved from storage
-                })
+                body: JSON.stringify(body)
             });
 
             let data;

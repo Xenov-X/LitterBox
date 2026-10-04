@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
         'xlsx', 'xlsm', 'xltm', 'xls',
     ]);
     const HTML_EXTS = new Set(['html', 'htm']);
+    const ARCHIVE_EXTS = new Set(['zip', '7z']);
     const launchers = (window.serverConfig && window.serverConfig.launchers) || {};
     const liveEdrProfiles = new Set((window.serverConfig && window.serverConfig.liveEdrProfiles) || []);
 
@@ -253,6 +254,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const family = isDriverFile ? 'driver'
                      : OFFICE_EXTS.has(ext) ? 'office'
                      : HTML_EXTS.has(ext)   ? 'html'
+                     : ARCHIVE_EXTS.has(ext) ? 'archive'
                      : 'regular';
 
         const tabs = document.querySelectorAll('#modeTabs .lb-tab');
@@ -277,6 +279,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const target = document.querySelector(`.lb-mode-body[data-mode="${firstVisible.dataset.mode}"]`);
             if (target) target.classList.remove('hidden');
         }
+
+        // Toggle archive-specific vs regular args inputs on EDR profile bodies.
+        const isArchive = family === 'archive';
+        document.querySelectorAll('.edr-args-container').forEach(el => {
+            el.classList.toggle('hidden', isArchive);
+        });
+        document.querySelectorAll('.archive-fields-container').forEach(el => {
+            el.classList.toggle('hidden', !isArchive);
+        });
 
         // Update args placeholders / hints for launcher-backed file types.
         const lc = launchers[ext];
@@ -1049,14 +1060,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.lbStartRun(`/analyze/${type}/${currentFileHash}`);
             } else if (type.startsWith('edr:')) {
                 // EDR profile dispatch: type is "edr:<profile_name>".
-                // Each profile body has its own args input (id =
-                // edrArgs-<profile>); read it, persist to localStorage so
-                // the results page's POST forwards it to Whiskers.
                 const profile = type.slice(4);
-                const argsInput = document.getElementById(`edrArgs-${profile}`);
-                const argsValue = argsInput ? argsInput.value : '';
-                const args = argsValue.split(' ').filter(arg => arg.trim() !== '');
-                localStorage.setItem(`analysisArgs:${currentFileHash}`, JSON.stringify(args));
+                const ext = (currentFileExtension || '').toLowerCase();
+                if (ARCHIVE_EXTS.has(ext)) {
+                    // Archive flow: exec_command + archive_password replace args.
+                    const execCmdInput = document.getElementById(`execCmd-${profile}`);
+                    const execCmd = execCmdInput ? execCmdInput.value.trim() : '';
+                    if (!execCmd) {
+                        showToast('Execution command is required for archive uploads', 'error');
+                        elements.fileAnalysisArea.classList.remove('opacity-0', 'scale-95');
+                        return;
+                    }
+                    const archivePwInput = document.getElementById(`archivePw-${profile}`);
+                    const archivePw = archivePwInput ? archivePwInput.value : '';
+                    localStorage.setItem(`archiveExecCmd:${currentFileHash}`, execCmd);
+                    localStorage.setItem(`archivePw:${currentFileHash}`, archivePw);
+                    localStorage.removeItem(`analysisArgs:${currentFileHash}`);
+                } else {
+                    // Regular flow: read args, persist to localStorage.
+                    const argsInput = document.getElementById(`edrArgs-${profile}`);
+                    const argsValue = argsInput ? argsInput.value : '';
+                    const args = argsValue.split(' ').filter(arg => arg.trim() !== '');
+                    localStorage.setItem(`analysisArgs:${currentFileHash}`, JSON.stringify(args));
+                    localStorage.removeItem(`archiveExecCmd:${currentFileHash}`);
+                    localStorage.removeItem(`archivePw:${currentFileHash}`);
+                }
                 window.lbStartRun(`/analyze/edr/${encodeURIComponent(profile)}/${currentFileHash}`);
             } else {
                 // Navigate to static analysis

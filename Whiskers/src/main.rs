@@ -19,6 +19,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod agent_log;
 mod api;
+mod archive;
 mod file_writer;
 mod state;
 
