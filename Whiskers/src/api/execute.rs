@@ -148,13 +148,12 @@ pub async fn exec(
         }
 
         let exe_name = tokens[0];
-        let exe_name_path = Path::new(exe_name);
-        if exe_name_path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+        if let Err(e) = crate::archive::validate_exe_name(exe_name) {
             let _ = tokio::fs::remove_dir_all(&extract_dir).await;
             return Err((StatusCode::BAD_REQUEST, Json(ExecResponse {
                 status: "error",
                 pid: None,
-                message: Some(format!("unsafe exe name in exec_command: {exe_name:?}")),
+                message: Some(e.to_string()),
             })));
         }
         // If the exe exists inside the extracted archive, use the full path.
