@@ -13,20 +13,31 @@ pub async fn extract(
     dest_dir: &Path,
     password: Option<&str>,
 ) -> io::Result<()> {
-    let header = {
-        let mut buf = [0u8; 6];
-        let data = tokio::fs::read(archive_path).await?;
-        let n = data.len().min(6);
-        buf[..n].copy_from_slice(&data[..n]);
-        (buf, data)
-    };
+    use tokio::io::AsyncReadExt;
 
-    let (magic, data) = header;
+    let mut magic = [0u8; 6];
+    let mut f = tokio::fs::File::open(archive_path).await?;
+    let n = f.read(&mut magic).await?;
+    let magic = &magic[..n];
 
     if magic.starts_with(ZIP_MAGIC) {
-        extract_zip(&data, dest_dir, password)?;
+        let data = tokio::fs::read(archive_path).await?;
+        let dest = dest_dir.to_path_buf();
+        let pw = password.map(String::from);
+        tokio::task::spawn_blocking(move || {
+            extract_zip(&data, &dest, pw.as_deref())
+        })
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
     } else if magic.starts_with(SEVEN_Z_MAGIC) {
-        extract_7z(archive_path, dest_dir, password)?;
+        let src = archive_path.to_path_buf();
+        let dest = dest_dir.to_path_buf();
+        let pw = password.map(String::from);
+        tokio::task::spawn_blocking(move || {
+            extract_7z(&src, &dest, pw.as_deref())
+        })
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
     } else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -117,39 +128,30 @@ fn extract_7z(archive_path: &Path, dest_dir: &Path, password: Option<&str>) -> i
 
     result.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    // sevenz-rust handles extraction but we still need to validate paths
-    // post-extraction. Walk the output dir and reject if anything escaped.
     validate_no_escape(dest_dir)?;
 
     Ok(())
 }
 
+/// Walk `dest_dir` and reject if any entry resolved outside of it.
+/// Checks lazily — returns on the first violation without collecting all paths.
 fn validate_no_escape(dest_dir: &Path) -> io::Result<()> {
     let canonical_base = std::fs::canonicalize(dest_dir)?;
-    for entry in walkdir(dest_dir)? {
-        let canonical = std::fs::canonicalize(&entry)?;
-        if !canonical.starts_with(&canonical_base) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("archive entry escaped dest dir: {}", entry.display()),
-            ));
+    let mut stack = vec![dest_dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        for entry in std::fs::read_dir(&current)? {
+            let path = entry?.path();
+            let canonical = std::fs::canonicalize(&path)?;
+            if !canonical.starts_with(&canonical_base) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("archive entry escaped dest dir: {}", path.display()),
+                ));
+            }
+            if path.is_dir() {
+                stack.push(path);
+            }
         }
     }
     Ok(())
-}
-
-fn walkdir(dir: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut result = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        for entry in std::fs::read_dir(&current)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path.clone());
-            }
-            result.push(path);
-        }
-    }
-    Ok(result)
 }
