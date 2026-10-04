@@ -148,7 +148,21 @@ pub async fn exec(
         }
 
         let exe_name = tokens[0];
-        let exe_path = extract_dir.join(exe_name);
+        let exe_name_path = Path::new(exe_name);
+        if exe_name_path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+            return Err((StatusCode::BAD_REQUEST, Json(ExecResponse {
+                status: "error",
+                pid: None,
+                message: Some(format!("unsafe exe name in exec_command: {exe_name:?}")),
+            })));
+        }
+        // If the exe exists inside the extracted archive, use the full path.
+        // Otherwise pass the bare name so Windows resolves it via PATH —
+        // this supports DLL sideloading where the exe is a system binary
+        // and the malicious DLLs sit in current_dir (the extract dir).
+        let local_exe = extract_dir.join(exe_name);
+        let exe_path = if local_exe.exists() { local_exe } else { PathBuf::from(exe_name) };
         let remaining_args: Vec<&str> = tokens[1..].to_vec();
 
         tracing::info!(
