@@ -91,7 +91,7 @@
                 Dynamic
             </button>
             {% for profile in edr_profiles %}
-            <button type="button" class="lb-tab" data-mode="edr:{{ profile.name }}" data-family="regular">
+            <button type="button" class="lb-tab" data-mode="edr:{{ profile.name }}" data-family="regular archive">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>
                 {{ profile.display_name }}
                 {% if profile.live_edr %}<span class="lb-tag high" style="margin-left: 4px; font-size: 9px;">LIVE</span>{% endif %}
@@ -197,6 +197,21 @@
                     <input type="text" id="edrArgs-{{ profile.name }}" data-edr-args="{{ profile.name }}"
                            placeholder="Enter arguments separated by spaces" class="lb-input lb-mono"/>
                     <p id="edrArgsHint-{{ profile.name }}" class="lb-muted" style="margin-top: 6px; font-size: 12px;">Forwarded to the spawned process on the EDR VM. <span class="lb-strong">For DLL files</span> the first argument is the exported entry point (e.g. <span class="lb-mono">DllMain</span>) — passed to <span class="lb-mono">rundll32.exe</span>.</p>
+                </div>
+                <div class="archive-fields-container hidden">
+                    <label class="lb-eyebrow" style="display: block; margin-bottom: 6px;">Execution Command</label>
+                    <input type="text" id="execCmd-{{ profile.name }}"
+                           placeholder="loader.exe payload.dll" class="lb-input lb-mono"/>
+                    <p class="lb-muted" style="margin-top: 6px; font-size: 12px;">
+                        Command to run inside the unpacked archive directory.
+                        The first token is treated as the filename for EDR alert correlation.
+                    </p>
+                    <label class="lb-eyebrow" style="display: block; margin-top: 12px; margin-bottom: 6px;">Archive Password</label>
+                    <input type="text" id="archivePw-{{ profile.name }}" value="infected"
+                           placeholder="infected" class="lb-input lb-mono"/>
+                    <p class="lb-muted" style="margin-top: 6px; font-size: 12px;">
+                        Leave as <span class="lb-mono">infected</span> for most malware zips. Clear if no password.
+                    </p>
                 </div>
                 <button type="button" data-analysis-type="edr:{{ profile.name }}" onclick="selectAnalysisType(this.dataset.analysisType)" class="lb-mode-cta">
                     Run with {{ profile.display_name }}

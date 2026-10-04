@@ -34,6 +34,7 @@ class FileTypeDetector:
     MZ = b"MZ"
     CFBF = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
     ZIP_PK = b"PK\x03\x04"
+    SEVEN_Z = b"\x37\x7A\xBC\xAF\x27\x1C"
     LNK_HEADER = b"\x4C\x00\x00\x00"
 
     PE_MACHINES = {0x14c: "x86", 0x8664: "x64", 0x1c0: "ARM", 0xaa64: "ARM64"}
@@ -58,6 +59,8 @@ class FileTypeDetector:
                 return cls._detect_ole_type(filepath)
             elif header.startswith(cls.ZIP_PK):
                 return cls._detect_zip_type(filepath)
+            elif header[:6] == cls.SEVEN_Z:
+                return {"family": "archive", "type": "7z"}
             elif header.startswith(cls.LNK_HEADER):
                 return cls._detect_lnk_type(filepath)
 
@@ -203,11 +206,11 @@ class FileTypeDetector:
                     except Exception:
                         pass
 
-                return {"family": "zip", "type": "zip"}
+                return {"family": "archive", "type": "zip"}
         except zipfile.BadZipFile:
-            return {"family": "zip", "type": "corrupted"}
+            return {"family": "archive", "type": "corrupted"}
         except Exception:
-            return {"family": "zip", "type": "error"}
+            return {"family": "archive", "type": "error"}
 
 
 def detect_file_type(filepath):

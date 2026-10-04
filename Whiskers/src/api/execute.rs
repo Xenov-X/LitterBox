@@ -49,6 +49,8 @@ struct ExecForm {
     executable_args: Option<String>,
     xor_key: Option<u8>,
     launcher: Option<String>,
+    exec_command: Option<String>,
+    archive_password: Option<String>,
 }
 
 pub async fn exec(
@@ -109,6 +111,128 @@ pub async fn exec(
     // Kill any previous run that's still hanging around (defensive — orchestrator
     // should have called kill, but if it didn't, don't leave orphans).
     take_previous_run_for_cleanup(&state).await;
+
+    // Archive extraction: if exec_command is set, the payload is a zip/7z
+    // archive. Extract it, then spawn from inside the extracted directory.
+    if let Some(ref exec_cmd) = form.exec_command {
+        let extract_dir = PathBuf::from(format!("{}_unpacked", file_path.display()));
+        let password = form.archive_password.as_deref();
+
+        if let Err(err) = crate::archive::extract(&file_path, &extract_dir, password).await {
+            tracing::error!(error = %err, "Archive extraction failed");
+            let virus_signaled = is_likely_av_block(&err);
+            let _ = tokio::fs::remove_file(&file_path).await;
+            let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+            if virus_signaled {
+                return Ok(Json(ExecResponse {
+                    status: "virus",
+                    pid: None,
+                    message: Some(format!("Antivirus blocked during extraction: {err}")),
+                }));
+            }
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ExecResponse {
+                status: "error",
+                pid: None,
+                message: Some(format!("Archive extraction failed: {err}")),
+            })));
+        }
+
+        let tokens: Vec<&str> = exec_cmd.split_whitespace().collect();
+        if tokens.is_empty() {
+            let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+            return Err((StatusCode::BAD_REQUEST, Json(ExecResponse {
+                status: "error",
+                pid: None,
+                message: Some("exec_command is empty".into()),
+            })));
+        }
+
+        let exe_name = tokens[0];
+        let exe_name_path = Path::new(exe_name);
+        if exe_name_path.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+            return Err((StatusCode::BAD_REQUEST, Json(ExecResponse {
+                status: "error",
+                pid: None,
+                message: Some(format!("unsafe exe name in exec_command: {exe_name:?}")),
+            })));
+        }
+        // If the exe exists inside the extracted archive, use the full path.
+        // Otherwise pass the bare name so Windows resolves it via PATH —
+        // this supports DLL sideloading where the exe is a system binary
+        // and the malicious DLLs sit in current_dir (the extract dir).
+        let local_exe = extract_dir.join(exe_name);
+        let exe_path = if local_exe.exists() { local_exe } else { PathBuf::from(exe_name) };
+        let remaining_args: Vec<&str> = tokens[1..].to_vec();
+
+        tracing::info!(
+            exe = %exe_path.display(),
+            args = ?remaining_args,
+            cwd = %extract_dir.display(),
+            "Spawning from extracted archive"
+        );
+
+        let mut command = Command::new(&exe_path);
+        if !remaining_args.is_empty() {
+            command.args(&remaining_args);
+        }
+        command
+            .current_dir(&extract_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                tracing::error!(error = %err, "Failed to spawn payload from archive");
+                let virus_signaled = is_likely_av_block(&err);
+                let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+                if virus_signaled {
+                    return Ok(Json(ExecResponse {
+                        status: "virus",
+                        pid: None,
+                        message: Some(format!("Antivirus blocked spawn: {err}")),
+                    }));
+                }
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ExecResponse {
+                    status: "error",
+                    pid: None,
+                    message: Some(format!("Failed to spawn from archive: {err}")),
+                })));
+            }
+        };
+
+        let pid = child.id().unwrap_or(0);
+        tracing::info!(pid, "Archive payload spawned");
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let (kill_tx, kill_rx) = oneshot::channel::<()>();
+
+        {
+            let mut run_slot = state.run.lock().unwrap();
+            *run_slot = Some(RunState {
+                pid,
+                started_at: Utc::now(),
+                finished_at: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: None,
+                status: ExecStatus::Running,
+                cleanup_files: vec![extract_dir],
+                child_kill_tx: Some(kill_tx),
+            });
+        }
+
+        tokio::spawn(monitor_run(child, stdout, stderr, kill_rx, Arc::clone(&state)));
+
+        return Ok(Json(ExecResponse {
+            status: "ok",
+            pid: Some(pid),
+            message: None,
+        }));
+    }
 
     // Spawn the payload. Three paths:
     //
@@ -368,15 +492,19 @@ async fn monitor_run(
         "Run finished"
     );
 
-    // Best-effort cleanup of dropped files. Brief delay so AV / handle lock
-    // releases first.
+    // Best-effort cleanup of dropped files/directories. Brief delay so AV /
+    // handle lock releases first.
     if !cleanup_files.is_empty() {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         for path in cleanup_files {
-            if let Err(err) = tokio::fs::remove_file(&path).await {
-                tracing::warn!(path = %path.display(), error = %err, "Cleanup remove failed");
+            let result = if path.is_dir() {
+                tokio::fs::remove_dir_all(&path).await
             } else {
-                tracing::info!(path = %path.display(), "Cleanup removed");
+                tokio::fs::remove_file(&path).await
+            };
+            match result {
+                Ok(()) => tracing::info!(path = %path.display(), "Cleanup removed"),
+                Err(err) => tracing::warn!(path = %path.display(), error = %err, "Cleanup remove failed"),
             }
         }
     }
@@ -442,6 +570,8 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
     let mut executable_args: Option<String> = None;
     let mut xor_key: Option<u8> = None;
     let mut launcher: Option<String> = None;
+    let mut exec_command: Option<String> = None;
+    let mut archive_password: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -498,6 +628,24 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
                     launcher = Some(s);
                 }
             }
+            "exec_command" => {
+                let s = field
+                    .text()
+                    .await
+                    .map_err(|e| format!("exec_command read error: {e}"))?;
+                if !s.is_empty() {
+                    exec_command = Some(s);
+                }
+            }
+            "archive_password" => {
+                let s = field
+                    .text()
+                    .await
+                    .map_err(|e| format!("archive_password read error: {e}"))?;
+                if !s.is_empty() {
+                    archive_password = Some(s);
+                }
+            }
             "execution_mode" => {
                 // Currently ignored — only "exec" mode supported. Accepted for
                 // forward compatibility with DetonatorAgent's protocol.
@@ -517,5 +665,7 @@ async fn parse_multipart(mut multipart: Multipart) -> Result<ExecForm, String> {
         executable_args,
         xor_key,
         launcher,
+        exec_command,
+        archive_password,
     })
 }

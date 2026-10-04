@@ -36,6 +36,9 @@ utils:
     - bat         # Batch file -- launched via cmd
     - cmd         # Batch file (alternate ext)
     - hta         # HTML Application -- launched via mshta
+    # Archives -- multi-file payloads (DLL sideloading, etc.)
+    - zip         # ZIP archive -- unpacked on the EDR VM before execution
+    - 7z          # 7-Zip archive -- unpacked on the EDR VM before execution
   max_file_size: 104857600  # 100MB in bytes
 
   # Launchers for file types that need a host binary on the EDR VM.

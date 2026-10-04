@@ -320,9 +320,13 @@ def analyze_edr(profile, target):
         return jsonify({'error': str(e)}), 400
     executable_args = ' '.join(cmd_args) if cmd_args else None
 
+    body = request.get_json(silent=True) or {}
+    exec_command = body.get("exec_command") or None
+    archive_password = body.get("archive_password") or None
+
     app.logger.debug(
         f"Dispatching to EDR profile {profile!r} with payload {file_path} "
-        f"args={executable_args!r}"
+        f"args={executable_args!r} exec_command={exec_command!r}"
     )
     results_filename = f'edr_{profile}_results.json'
 
@@ -352,6 +356,8 @@ def analyze_edr(profile, target):
         results = deps.edr_registry.dispatch_split(
             profile, file_path, app.config, _on_phase_2_done,
             executable_args=executable_args,
+            exec_command=exec_command,
+            archive_password=archive_password,
         )
     except Exception as e:
         app.logger.error(f"EDR dispatch failed: {e}", exc_info=True)

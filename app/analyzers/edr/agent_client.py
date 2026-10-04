@@ -100,6 +100,8 @@ class AgentClient:
         executable_args: Optional[str] = None,
         xor_key: Optional[int] = None,
         launcher: Optional[str] = None,
+        exec_command: Optional[str] = None,
+        archive_password: Optional[str] = None,
     ) -> dict:
         """Send a payload over multipart and spawn it on the EDR VM.
 
@@ -135,6 +137,10 @@ class AgentClient:
             data["xor_key"] = str(xor_key)
         if launcher:
             data["launcher"] = launcher
+        if exec_command:
+            data["exec_command"] = exec_command
+        if archive_password:
+            data["archive_password"] = archive_password
 
         url = f"{self.agent_url}/api/execute/exec"
         try:
